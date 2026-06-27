@@ -1,0 +1,36 @@
+[package]
+name = "arc-relay"
+version = "0.1.0"
+edition = "2024"
+description = "Relay server for arc: WebSocket-based signaling and packet forwarding"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "arc-relay"
+path = "src/main.rs"
+
+[dependencies]
+arc-core = { path = "../arc-core" }
+
+# HTTP / WebSocket
+axum = { version = "0.8.9", features = ["ws"] }
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.0", features = ["trace"] }
+tokio-tungstenite = "0.29.0"
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+
+# Async runtime
+tokio = { version = "1.52.3", features = ["full"] }
+
+# Observability
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+prometheus = "0.14.0"
+
+# Utilities
+anyhow = "1.0.103"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+uuid = { version = "1.23.4", features = ["v4"] }
+dashmap = "6.2.1"
+clap = { version = "4.6.1", features = ["derive", "env"] }

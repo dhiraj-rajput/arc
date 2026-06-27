@@ -1,0 +1,19 @@
+[workspace]
+members = [
+    "arc-core",
+    "arc-cli",
+    "arc-relay",
+]
+resolver = "3"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = "debuginfo"
+panic = "abort"
+
+[profile.release-native]
+inherits = "release"
+# Uncomment for self-built binaries (not portable):
+# target-cpu = "native"
