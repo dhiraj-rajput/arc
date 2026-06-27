@@ -1,0 +1,22 @@
+# Rust / Cargo
+/target/
+**/target/
+**/*.rs.bk
+
+# Editor / OS files
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Project-generated artifacts
+/received/
