@@ -209,6 +209,12 @@ enum Commands {
         /// Device name to display during pairing.
         #[arg(long)]
         name: Option<String>,
+        /// Initiate pairing non-interactively.
+        #[arg(long)]
+        initiator: bool,
+        /// Join pairing non-interactively with the given codephrase.
+        #[arg(long)]
+        joiner: Option<String>,
     },
 
     /// Manage paired devices.
@@ -354,8 +360,8 @@ async fn main() -> anyhow::Result<()> {
                     commands::receive::exec_receive(phrase, dir, stdout, cli.relay).await?;
                 }
 
-                Commands::Pair { name } => {
-                    commands::pair::exec_pair(name, cli.relay).await?;
+                Commands::Pair { name, initiator, joiner } => {
+                    commands::pair::exec_pair(name, initiator, joiner, cli.relay).await?;
                 }
 
                 Commands::Peers(command) => {

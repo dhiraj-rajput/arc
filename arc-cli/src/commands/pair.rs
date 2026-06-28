@@ -4,20 +4,29 @@ use crate::generate_phrase;
 
 pub async fn exec_pair(
     name: Option<String>,
+    initiator: bool,
+    joiner: Option<String>,
     relay_override: Option<String>,
 ) -> anyhow::Result<()> {
     let (_, config) = get_identity_with_merged_config()?;
     let relay_url = relay_override.as_deref().unwrap_or(&config.relay_url);
     let display_name = name.unwrap_or_else(|| config.device_name.clone());
     
-    let selections = &["1) Initiator (Show pairing code)", "2) Joiner (Enter pairing code)"];
-    let selection = dialoguer::Select::with_theme(&dialoguer::theme::SimpleTheme)
-        .with_prompt("Choose pairing role")
-        .items(selections)
-        .default(0)
-        .interact()?;
+    let is_initiator = if initiator {
+        true
+    } else if joiner.is_some() {
+        false
+    } else {
+        let selections = &["1) Initiator (Show pairing code)", "2) Joiner (Enter pairing code)"];
+        let selection = dialoguer::Select::with_theme(&dialoguer::theme::SimpleTheme)
+            .with_prompt("Choose pairing role")
+            .items(selections)
+            .default(0)
+            .interact()?;
+        selection == 0
+    };
 
-    if selection == 0 {
+    if is_initiator {
         let code = generate_phrase();
         println!("\nPairing Initiated!");
         println!("==================");
@@ -39,9 +48,13 @@ pub async fn exec_pair(
         run_pairing_sender(&code, relay_url, &display_name).await?;
         println!("\n🎉 Pairing completed successfully! Device '{}' is now authorized.", display_name);
     } else {
-        let code = dialoguer::Input::<String>::with_theme(&dialoguer::theme::SimpleTheme)
-            .with_prompt("Enter the pairing code from the other device")
-            .interact_text()?;
+        let code = if let Some(code_val) = joiner {
+            code_val
+        } else {
+            dialoguer::Input::<String>::with_theme(&dialoguer::theme::SimpleTheme)
+                .with_prompt("Enter the pairing code from the other device")
+                .interact_text()?
+        };
 
         println!("\nPairing Joiner!");
         println!("===============");
