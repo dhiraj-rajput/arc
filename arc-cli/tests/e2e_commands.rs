@@ -1,7 +1,6 @@
 mod support;
 
 use std::fs;
-use std::process::Stdio;
 use std::thread;
 use std::time::Duration;
 
@@ -218,15 +217,14 @@ fn test_pair_cli_with_fixed_code() {
     let env_b = TestEnv::new();
     env_b.write_minimal_config(&ws_url, "device-b");
 
-    let joiner = {
-        let mut cmd: std::process::Command = env_b.arc_cmd().into();
-        cmd.args(["pair", "--joiner", PHRASE, "--name", "device-b"]);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        thread::spawn(move || {
-            let output = cmd.output().expect("joiner output");
-            assert!(output.status.success(), "joiner failed: {:?}", output);
-        })
-    };
+    let joiner = thread::spawn(move || {
+        env_b
+            .arc_cmd()
+            .args(["pair", "--joiner", PHRASE, "--name", "device-b"])
+            .timeout(Duration::from_secs(120))
+            .assert()
+            .success();
+    });
 
     thread::sleep(Duration::from_millis(300));
 

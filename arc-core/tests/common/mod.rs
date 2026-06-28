@@ -33,11 +33,6 @@ impl InProcessRelay {
         }
     }
 
-    pub fn with_max_members(mut self, max_members: usize) -> Self {
-        self.max_members = max_members;
-        self
-    }
-
     pub async fn start(self, addr: &str) -> SocketAddr {
         let listener = TcpListener::bind(addr).await.unwrap();
         let local_addr = listener.local_addr().unwrap();
@@ -199,9 +194,9 @@ impl Default for InProcessRelay {
     }
 }
 
-/// Isolated config directory for integration and CLI subprocess tests.
+/// Isolated config directory for integration tests.
 pub struct TestEnv {
-    pub config_dir: tempfile::TempDir,
+    config_dir: tempfile::TempDir,
 }
 
 impl TestEnv {
@@ -219,40 +214,6 @@ impl TestEnv {
 
     pub fn config_path(&self) -> PathBuf {
         self.config_dir.path().join("config.json")
-    }
-
-    pub fn write_config(&self, relay_url: &str, device_name: &str) {
-        fs::create_dir_all(self.config_dir.path()).unwrap();
-        let config = serde_json::json!({
-            "device_name": device_name,
-            "relay_url": relay_url,
-            "max_upload_mbps": null,
-            "dns_probe_ipv4": "8.8.8.8:80",
-            "dns_probe_ipv6": "[2001:4860:4860::8888]:80",
-            "transport": {
-                "quic_connect_timeout_ms": 3000,
-                "p2p_racing_timeout_ms": 2000,
-                "mdns_browse_timeout_ms": 500
-            }
-        });
-        fs::write(
-            self.config_path(),
-            serde_json::to_string_pretty(&config).unwrap(),
-        )
-        .unwrap();
-    }
-
-    pub fn arc_env(&self) -> Vec<(String, String)> {
-        vec![
-            (
-                arc_core::storage::ENV_CONFIG_DIR.to_string(),
-                self.config_dir.path().to_string_lossy().into_owned(),
-            ),
-            (
-                "ARC_KEYRING_SUFFIX".to_string(),
-                format!("test-{}", uuid::Uuid::new_v4()),
-            ),
-        ]
     }
 }
 
