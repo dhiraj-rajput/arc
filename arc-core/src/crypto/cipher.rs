@@ -249,6 +249,28 @@ mod tests {
             CipherSuite::ChaCha20Poly1305Blake3 | CipherSuite::Aes256GcmBlake3
         ));
     }
+
+    proptest::proptest! {
+        #[test]
+        fn test_proptest_roundtrip_chacha20(ref s in "\\PC*") {
+            let key = generate_key();
+            let nonce = build_nonce(100, 0, Direction::ToReceiver);
+            let bytes = s.as_bytes();
+            let ciphertext = encrypt_chunk(&key, &nonce, bytes, CipherSuite::ChaCha20Poly1305Blake3).unwrap();
+            let recovered = decrypt_chunk(&key, &nonce, &ciphertext, CipherSuite::ChaCha20Poly1305Blake3).unwrap();
+            assert_eq!(recovered, bytes);
+        }
+
+        #[test]
+        fn test_proptest_roundtrip_aes(ref s in "\\PC*") {
+            let key = generate_key();
+            let nonce = build_nonce(100, 0, Direction::ToReceiver);
+            let bytes = s.as_bytes();
+            let ciphertext = encrypt_chunk(&key, &nonce, bytes, CipherSuite::Aes256GcmBlake3).unwrap();
+            let recovered = decrypt_chunk(&key, &nonce, &ciphertext, CipherSuite::Aes256GcmBlake3).unwrap();
+            assert_eq!(recovered, bytes);
+        }
+    }
 }
 
 

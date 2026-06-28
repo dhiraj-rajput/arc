@@ -73,18 +73,16 @@ impl ClipboardWatcher {
             let mut last_text = clipboard.get_text().unwrap_or_default();
 
             while running.load(Ordering::SeqCst) {
-                if let Ok(text) = clipboard.get_text() {
-                    if text != last_text && !text.is_empty() {
-                        let seq = sequence.fetch_add(1, Ordering::SeqCst) + 1;
-                        last_text = text.clone();
-                        let event = ClipboardEvent {
-                            sequence: seq,
-                            source_device_id: device_id,
-                            content: ClipboardContent::Text(text),
-                        };
-                        if tx.blocking_send(event).is_err() {
-                            break; // receiver dropped
-                        }
+                if let Some(text) = clipboard.get_text().ok().filter(|t| t != &last_text && !t.is_empty()) {
+                    let seq = sequence.fetch_add(1, Ordering::SeqCst) + 1;
+                    last_text = text.clone();
+                    let event = ClipboardEvent {
+                        sequence: seq,
+                        source_device_id: device_id,
+                        content: ClipboardContent::Text(text),
+                    };
+                    if tx.blocking_send(event).is_err() {
+                        break; // receiver dropped
                     }
                 }
                 std::thread::sleep(poll_interval);

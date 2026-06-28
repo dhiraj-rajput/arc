@@ -59,7 +59,7 @@ impl ResumeState {
     ///
     /// Bit `i % 8` of byte `i / 8` is set if chunk `i` is received.
     pub fn to_bitmap(&self) -> Vec<u8> {
-        let byte_len = (self.total_chunks as usize + 7) / 8;
+        let byte_len = (self.total_chunks as usize).div_ceil(8);
         let mut bitmap = vec![0u8; byte_len];
         for &idx in &self.received {
             if idx < self.total_chunks {

@@ -1,5 +1,4 @@
-use std::fs::{self, OpenOptions};
-use std::io::{Write, Seek, SeekFrom};
+use std::fs;
 use std::path::Path;
 
 use tokio::sync::mpsc;
@@ -197,10 +196,7 @@ async fn run_quic_receiver_session(
     let (temp_file_path, mut file) = if (is_directory || is_clipboard) && stdout_tx.is_none() {
         let temp_file = tempfile::NamedTempFile::new()?;
         let (file, temp_path) = temp_file.into_parts();
-        let f = std::fs::File::from(file);
-        if total_size > 0 {
-            f.set_len(total_size)?;
-        }
+        let f = tokio::fs::File::from_std(file);
         (Some(temp_path), Some(f))
     } else {
         let f = if stdout_tx.is_none() {
@@ -208,13 +204,13 @@ async fn run_quic_receiver_session(
                 fs::create_dir_all(parent)?;
             }
             let is_resuming = resume_state.received_count() > 0;
-            let f = OpenOptions::new()
+            let f = tokio::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(!is_resuming)
-                .open(&output_path)?;
+                .open(&output_path).await?;
             if total_size > 0 {
-                f.set_len(total_size)?;
+                f.set_len(total_size).await?;
             }
             Some(f)
         } else {
@@ -259,9 +255,11 @@ async fn run_quic_receiver_session(
                 overall_hasher.update(&decompressed);
 
                 if let Some(ref mut f) = file {
+                    use tokio::io::AsyncSeekExt;
+                    use tokio::io::AsyncWriteExt;
                     let offset = index as u64 * chunk_size as u64;
-                    f.seek(SeekFrom::Start(offset))?;
-                    f.write_all(&decompressed)?;
+                    f.seek(std::io::SeekFrom::Start(offset)).await?;
+                    f.write_all(&decompressed).await?;
                 } else if let Some(ref tx) = stdout_tx {
                     let _ = tx.send(decompressed).await;
                 }
@@ -292,8 +290,9 @@ async fn run_quic_receiver_session(
                 let _ = crate::transfer::resume::ResumeState::delete_from_disk(&transfer_id);
                 let mut clipboard_content = None;
                 if let Some(ref mut f) = file {
-                    f.flush()?;
-                    f.sync_all()?;
+                    use tokio::io::AsyncWriteExt;
+                    f.flush().await?;
+                    f.sync_all().await?;
                     
                     if is_directory {
                         if let Some(ref tp) = temp_file_path {
@@ -408,10 +407,8 @@ pub async fn run_receiver(
                             }
                         }
                     }
-                    WsRelayMessage::RoomMemberCount { count, .. } => {
-                        if count > 2 {
-                            return Err(anyhow::anyhow!("Relay MITM detected (members > 2)"));
-                        }
+                    WsRelayMessage::RoomMemberCount { count, .. } if count > 2 => {
+                        return Err(anyhow::anyhow!("Relay MITM detected (members > 2)"));
                     }
                     _ => {}
                 }

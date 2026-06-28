@@ -306,7 +306,7 @@ pub fn strip_control_padding(padded: &[u8]) -> Result<&[u8], anyhow::Error> {
     }
     let pad_len_bytes = &padded[CONTROL_PADDED_SIZE - 2..];
     let pad_len = u16::from_le_bytes(pad_len_bytes.try_into().unwrap()) as usize;
-    if pad_len < 2 || pad_len > CONTROL_PADDED_SIZE {
+    if !(2..=CONTROL_PADDED_SIZE).contains(&pad_len) {
         return Err(anyhow::anyhow!("Invalid control message padding length: {}", pad_len));
     }
     Ok(&padded[..CONTROL_PADDED_SIZE - pad_len])
@@ -497,5 +497,36 @@ mod tests {
         // Test with a message that is too large
         let too_large_msg = vec![0x42u8; CONTROL_PADDED_SIZE - 1];
         assert!(pad_control_message(&too_large_msg).is_err());
+    }
+
+    #[test]
+    fn test_control_padding_empty() {
+        let empty_msg = b"";
+        let padded = pad_control_message(empty_msg).unwrap();
+        assert_eq!(padded.len(), CONTROL_PADDED_SIZE);
+        let stripped = strip_control_padding(&padded).unwrap();
+        assert_eq!(stripped, empty_msg);
+    }
+
+    #[test]
+    fn test_control_padding_invalid_length() {
+        let mut padded = vec![0u8; CONTROL_PADDED_SIZE];
+        // Set invalid padding length indicator: 0 bytes
+        padded[CONTROL_PADDED_SIZE - 2..].copy_from_slice(&0u16.to_le_bytes());
+        assert!(strip_control_padding(&padded).is_err());
+
+        // Set invalid padding length indicator: 1 byte (minimum padding length must be 2)
+        padded[CONTROL_PADDED_SIZE - 2..].copy_from_slice(&1u16.to_le_bytes());
+        assert!(strip_control_padding(&padded).is_err());
+
+        // Set invalid padding length indicator: 513 bytes (greater than CONTROL_PADDED_SIZE)
+        padded[CONTROL_PADDED_SIZE - 2..].copy_from_slice(&513u16.to_le_bytes());
+        assert!(strip_control_padding(&padded).is_err());
+    }
+
+    #[test]
+    fn test_control_padding_invalid_total_size() {
+        let invalid_size = vec![0u8; 100];
+        assert!(strip_control_padding(&invalid_size).is_err());
     }
 }

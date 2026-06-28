@@ -190,8 +190,8 @@ impl SandboxPolicy {
             // Helper to strip Windows UNC prefix for consistent matching
             let clean_path = |p: &Path| -> PathBuf {
                 let s = p.to_string_lossy();
-                if s.starts_with(r"\\?\") {
-                    PathBuf::from(&s[4..])
+                if let Some(stripped) = s.strip_prefix(r"\\?\") {
+                    PathBuf::from(stripped)
                 } else {
                     p.to_path_buf()
                 }
@@ -386,5 +386,77 @@ mod tests {
         let outside_dir = tempfile::tempdir().unwrap();
         let outside_file = outside_dir.path().join("outside.txt");
         assert!(policy.enforce(&outside_file).is_err());
+    }
+
+    #[test]
+    fn test_safe_unpack_tar_traversal_blocked() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dest_dir = temp_dir.path().join("dest");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        // 1. Test relative path traversal in tar entry
+        let tar_file_path = temp_dir.path().join("test_traversal.tar");
+        let file = std::fs::File::create(&tar_file_path).unwrap();
+        let mut builder = tar::Builder::new(file);
+
+        let mut header = tar::Header::new_gnu();
+        header.set_path("safe.txt").unwrap();
+        header.set_size(7);
+        
+        // Bypassing set_path checks by mutating raw bytes
+        let raw_header = header.as_mut_bytes();
+        let traversal_path = b"../outside.txt\0";
+        raw_header[..traversal_path.len()].copy_from_slice(traversal_path);
+        header.set_cksum();
+        
+        builder.append(&header, b"travers".as_slice()).unwrap();
+        builder.finish().unwrap();
+
+        let archive_file = std::fs::File::open(&tar_file_path).unwrap();
+        let res = safe_unpack_tar(archive_file, &dest_dir);
+        assert!(res.is_err(), "path traversal in tar must fail");
+
+        // 2. Test absolute path in tar entry
+        let tar_abs_path = temp_dir.path().join("test_abs.tar");
+        let file = std::fs::File::create(&tar_abs_path).unwrap();
+        let mut builder = tar::Builder::new(file);
+        let mut header = tar::Header::new_gnu();
+        header.set_path("safe2.txt").unwrap();
+        header.set_size(3);
+        
+        let raw_header = header.as_mut_bytes();
+        let abs_path = b"/absolute.txt\0";
+        raw_header[..abs_path.len()].copy_from_slice(abs_path);
+        header.set_cksum();
+        
+        builder.append(&header, b"abs".as_slice()).unwrap();
+        builder.finish().unwrap();
+
+        let archive_file = std::fs::File::open(&tar_abs_path).unwrap();
+        let res = safe_unpack_tar(archive_file, &dest_dir);
+        assert!(res.is_err(), "absolute path in tar must fail");
+    }
+
+    #[test]
+    fn test_safe_unpack_tar_links_blocked() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dest_dir = temp_dir.path().join("dest");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        let tar_sym_path = temp_dir.path().join("test_symlink.tar");
+        let file = std::fs::File::create(&tar_sym_path).unwrap();
+        let mut builder = tar::Builder::new(file);
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_path("link.txt").unwrap();
+        header.set_link_name("target.txt").unwrap();
+        header.set_size(0);
+        header.set_cksum();
+        builder.append(&header, b"".as_slice()).unwrap();
+        builder.finish().unwrap();
+
+        let archive_file = std::fs::File::open(&tar_sym_path).unwrap();
+        let res = safe_unpack_tar(archive_file, &dest_dir);
+        assert!(res.is_err(), "symlinks in tar must be rejected");
     }
 }

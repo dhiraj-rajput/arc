@@ -222,6 +222,12 @@ enum Commands {
     /// Discover active arc devices on the local network.
     Discover,
 
+    /// Sync clipboard in real-time (daemon mode).
+    Clipboard {
+        /// Codephrase room to sync over.
+        phrase: String,
+    },
+
     /// Relay server diagnostics.
     Relay {
         #[command(subcommand)]
@@ -364,6 +370,10 @@ async fn main() -> anyhow::Result<()> {
                     commands::discover::exec_discover().await?;
                 }
 
+                Commands::Clipboard { phrase } => {
+                    commands::clipboard::exec_clipboard_sync(phrase, cli.relay).await?;
+                }
+
                 Commands::Relay { action: RelayAction::Status } => {
                     commands::relay::exec_relay(cli.relay).await?;
                 }
@@ -454,6 +464,7 @@ async fn run_interactive_menu() -> anyhow::Result<()> {
             "List paired devices",
             "Show device configuration",
             "Discover local network devices",
+            "Sync clipboard (Daemon mode)",
             "Panic (Wipe identity)",
             "Exit",
         ];
@@ -681,6 +692,19 @@ async fn run_interactive_menu() -> anyhow::Result<()> {
             }
 
             6 => {
+                let phrase: String = Input::with_theme(&theme)
+                    .with_prompt("Enter the 6-word phrase/code to sync over")
+                    .interact_text()?;
+                if !validate_passphrase(&phrase) {
+                    println!("Error: Invalid passphrase format. Must be 6 hyphen-separated words.");
+                    continue;
+                }
+                if let Err(e) = commands::clipboard::exec_clipboard_sync(phrase, None).await {
+                    println!("Clipboard sync failed: {}", e);
+                }
+            }
+
+            7 => {
                 let confirm = Confirm::with_theme(&theme)
                     .with_prompt("WIPE all configuration and identities?")
                     .default(false)

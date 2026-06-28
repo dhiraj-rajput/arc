@@ -215,6 +215,27 @@ mod tests {
             assert_eq!(decompressed.as_slice(), data, "{algo:?} roundtrip failed");
         }
     }
+
+    #[test]
+    fn test_decompression_bomb_zstd() {
+        let data = vec![0u8; 1000];
+        let compressed = compress(&data, CompressionAlgo::Zstd, 3).unwrap();
+        // Decompressing with limit smaller than data length should fail
+        let res = decompress_with_limit(&compressed, CompressionAlgo::Zstd, 500);
+        assert!(res.is_err(), "zstd decompression bomb must fail");
+    }
+
+    #[test]
+    fn test_decompression_bomb_lz4() {
+        let data = vec![0u8; 1000];
+        let compressed = compress(&data, CompressionAlgo::Lz4, 0).unwrap();
+        // Decompressing with limit smaller than data length should fail
+        let res = decompress_with_limit(&compressed, CompressionAlgo::Lz4, 500);
+        assert!(res.is_err(), "lz4 decompression bomb must fail");
+
+        // Test invalid lz4 data smaller than 4 bytes
+        assert!(decompress_with_limit(&[0u8; 3], CompressionAlgo::Lz4, 100).is_err());
+    }
 }
 
 

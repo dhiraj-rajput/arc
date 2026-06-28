@@ -71,7 +71,7 @@ impl AdaptiveChunker {
         let chunk_count = if file_size == 0 {
             1
         } else {
-            ((file_size + chunk_size as u64 - 1) / chunk_size as u64) as u32
+            file_size.div_ceil(chunk_size as u64) as u32
         };
 
         Ok(Self {

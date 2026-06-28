@@ -76,7 +76,7 @@ impl RateLimiter {
     }
 }
 
-pub(crate) fn encrypt_signal(key_bytes: &[u8; 32], plaintext: &[u8]) -> Result<String, anyhow::Error> {
+pub fn encrypt_signal(key_bytes: &[u8; 32], plaintext: &[u8]) -> Result<String, anyhow::Error> {
     let cipher = ChaCha20Poly1305::new(Key::from_slice(key_bytes));
     let nonce_bytes: [u8; 12] = rand::random();
     let ciphertext = cipher.encrypt(Nonce::from_slice(&nonce_bytes), plaintext)
@@ -86,7 +86,7 @@ pub(crate) fn encrypt_signal(key_bytes: &[u8; 32], plaintext: &[u8]) -> Result<S
     Ok(hex::encode(combined))
 }
 
-pub(crate) fn decrypt_signal(key_bytes: &[u8; 32], hex_str: &str) -> Result<Vec<u8>, anyhow::Error> {
+pub fn decrypt_signal(key_bytes: &[u8; 32], hex_str: &str) -> Result<Vec<u8>, anyhow::Error> {
     let combined = hex::decode(hex_str)?;
     if combined.len() < 12 {
         return Err(anyhow::anyhow!("invalid signal length"));
@@ -99,23 +99,23 @@ pub(crate) fn decrypt_signal(key_bytes: &[u8; 32], hex_str: &str) -> Result<Vec<
 }
 
 #[derive(Serialize)]
-pub(crate) struct WsJoin {
-    pub(crate) r#type: &'static str,
-    pub(crate) room_id: String,
-    pub(crate) max_members: Option<usize>,
+pub struct WsJoin {
+    pub r#type: &'static str,
+    pub room_id: String,
+    pub max_members: Option<usize>,
 }
 
 #[derive(Serialize)]
-pub(crate) struct WsSignal {
-    pub(crate) r#type: &'static str,
-    pub(crate) room_id: String,
-    pub(crate) data: String,
+pub struct WsSignal {
+    pub r#type: &'static str,
+    pub room_id: String,
+    pub data: String,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(dead_code)]
-pub(crate) enum WsRelayMessage {
+pub enum WsRelayMessage {
     Joined { room_id: String, member_count: u8 },
     RoomMemberCount { room_id: String, count: u8 },
     Signal { data: String },
@@ -161,13 +161,11 @@ pub async fn run_pairing_sender(
     while let Some(msg_res) = ws_read.next().await {
         let msg = msg_res?;
         if let Message::Text(text) = msg {
-            if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
-                if let WsRelayMessage::Signal { data } = relay_msg {
-                    if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                        if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
-                            receiver_handshake = Some(payload);
-                            break;
-                        }
+            if let Ok(WsRelayMessage::Signal { data }) = serde_json::from_str::<WsRelayMessage>(&text) {
+                if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                    if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                        receiver_handshake = Some(payload);
+                        break;
                     }
                 }
             }
@@ -283,13 +281,11 @@ pub async fn run_pairing_receiver(
     while let Some(msg_res) = ws_read.next().await {
         let msg = msg_res?;
         if let Message::Text(text) = msg {
-            if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
-                if let WsRelayMessage::Signal { data } = relay_msg {
-                    if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                        if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
-                            sender_handshake = Some(payload);
-                            break;
-                        }
+            if let Ok(WsRelayMessage::Signal { data }) = serde_json::from_str::<WsRelayMessage>(&text) {
+                if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                    if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                        sender_handshake = Some(payload);
+                        break;
                     }
                 }
             }

@@ -263,8 +263,8 @@ mod tests {
         let alice_pair = EphemeralKeyPair::generate();
         let bob_pair = EphemeralKeyPair::generate();
 
-        let alice_pub = alice_pair.public.clone();
-        let bob_pub = bob_pair.public.clone();
+        let alice_pub = alice_pair.public;
+        let bob_pub = bob_pair.public;
 
         let nonce_a = [1u8; 32];
         let nonce_b = [2u8; 32];

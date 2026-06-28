@@ -107,19 +107,14 @@ impl DiscoveryManager {
             Ok(receiver) => {
                 let start = std::time::Instant::now();
                 while start.elapsed() < timeout {
-                    if let Ok(event) = receiver.recv_timeout(Duration::from_millis(50)) {
-                        match event {
-                            ServiceEvent::ServiceResolved(info) => {
-                                let port = info.get_port();
-                                for ip in info.get_addresses() {
-                                    let addr = SocketAddr::new(ip.to_ip_addr(), port);
-                                    if !candidates.contains(&addr) {
-                                        debug!("mDNS discovered peer candidate: {}", addr);
-                                        candidates.push(addr);
-                                    }
-                                }
+                    if let Ok(ServiceEvent::ServiceResolved(info)) = receiver.recv_timeout(Duration::from_millis(50)) {
+                        let port = info.get_port();
+                        for ip in info.get_addresses() {
+                            let addr = SocketAddr::new(ip.to_ip_addr(), port);
+                            if !candidates.contains(&addr) {
+                                debug!("mDNS discovered peer candidate: {}", addr);
+                                candidates.push(addr);
                             }
-                            _ => {}
                         }
                     }
                 }
@@ -137,19 +132,17 @@ impl DiscoveryManager {
         if let Ok(receiver) = self.daemon.browse(self.service_type) {
             let start = std::time::Instant::now();
             while start.elapsed() < timeout {
-                if let Ok(event) = receiver.recv_timeout(Duration::from_millis(50)) {
-                    if let ServiceEvent::ServiceResolved(info) = event {
-                        let name = info.get_fullname().to_string();
-                        let port = info.get_port();
-                        let device_id = info.get_properties()
-                            .get("device_id")
-                            .map(|v| v.val_str().to_string())
-                            .unwrap_or_default();
-                        for ip in info.get_addresses() {
-                            let addr = SocketAddr::new(ip.to_ip_addr(), port);
-                            if !resolved.iter().any(|(_, a, _)| *a == addr) {
-                                resolved.push((name.clone(), addr, device_id.clone()));
-                            }
+                if let Ok(ServiceEvent::ServiceResolved(info)) = receiver.recv_timeout(Duration::from_millis(50)) {
+                    let name = info.get_fullname().to_string();
+                    let port = info.get_port();
+                    let device_id = info.get_properties()
+                        .get("device_id")
+                        .map(|v| v.val_str().to_string())
+                        .unwrap_or_default();
+                    for ip in info.get_addresses() {
+                        let addr = SocketAddr::new(ip.to_ip_addr(), port);
+                        if !resolved.iter().any(|(_, a, _)| *a == addr) {
+                            resolved.push((name.clone(), addr, device_id.clone()));
                         }
                     }
                 }
@@ -164,14 +157,12 @@ impl DiscoveryManager {
         if let Ok(receiver) = self.daemon.browse(self.service_type) {
             let start = std::time::Instant::now();
             while start.elapsed() < timeout {
-                if let Ok(event) = receiver.recv_timeout(Duration::from_millis(50)) {
-                    if let ServiceEvent::ServiceResolved(info) = event {
-                        if let Some(prop) = info.get_properties().get("device_id") {
-                            if prop.val_str() == target_hex {
-                                let port = info.get_port();
-                                if let Some(ip) = info.get_addresses().iter().next() {
-                                    return Some(SocketAddr::new(ip.to_ip_addr(), port));
-                                }
+                if let Ok(ServiceEvent::ServiceResolved(info)) = receiver.recv_timeout(Duration::from_millis(50)) {
+                    if let Some(prop) = info.get_properties().get("device_id") {
+                        if prop.val_str() == target_hex {
+                            let port = info.get_port();
+                            if let Some(ip) = info.get_addresses().iter().next() {
+                                return Some(SocketAddr::new(ip.to_ip_addr(), port));
                             }
                         }
                     }

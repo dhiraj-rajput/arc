@@ -308,8 +308,13 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, client_id: String
                 }
             } => {
                 if peer_msg.sender_id != client_id {
-                    let relay_msg = RelayMessage::Signal { data: peer_msg.payload };
-                    if let Ok(msg_json) = serde_json::to_string(&relay_msg) {
+                    let msg_json = if peer_msg.sender_id == "relay" {
+                        peer_msg.payload
+                    } else {
+                        let relay_msg = RelayMessage::Signal { data: peer_msg.payload };
+                        serde_json::to_string(&relay_msg).unwrap_or_default()
+                    };
+                    if !msg_json.is_empty() {
                         let _ = socket.send(Message::Text(msg_json.into())).await;
                     }
                 }
@@ -395,13 +400,11 @@ async fn handle_join(
         room_id: room_id.clone(),
         count: member_count,
     };
-    if let Some(room) = state.rooms.get(&room_id) {
-        if let Ok(count_json) = serde_json::to_string(&count_msg) {
-            let _ = room.tx.send(BroadcastPayload {
-                sender_id: "relay".to_string(),
-                payload: count_json,
-            });
-        }
+    if let (Some(room), Ok(count_json)) = (state.rooms.get(&room_id), serde_json::to_string(&count_msg)) {
+        let _ = room.tx.send(BroadcastPayload {
+            sender_id: "relay".to_string(),
+            payload: count_json,
+        });
     }
 }
 
@@ -442,21 +445,21 @@ async fn metrics_handler(
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
     let expected_token = METRICS_TOKEN.get().map(|s| s.as_str()).unwrap_or("disabled_default_token");
-    if let Some(auth_header) = headers.get("Authorization") {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if auth_str == format!("Bearer {}", expected_token) {
-                use prometheus::Encoder;
-                let encoder = prometheus::TextEncoder::new();
-                let metric_families = registry().gather();
-                let mut buffer = Vec::new();
-                if encoder.encode(&metric_families, &mut buffer).is_ok() {
-                    return axum::response::Response::builder()
-                        .header("content-type", encoder.format_type())
-                        .body(axum::body::Body::from(buffer))
-                        .unwrap_or_default()
-                        .into_response();
-                }
-            }
+    let authenticated = headers.get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s == format!("Bearer {}", expected_token))
+        .unwrap_or(false);
+    if authenticated {
+        use prometheus::Encoder;
+        let encoder = prometheus::TextEncoder::new();
+        let metric_families = registry().gather();
+        let mut buffer = Vec::new();
+        if encoder.encode(&metric_families, &mut buffer).is_ok() {
+            return axum::response::Response::builder()
+                .header("content-type", encoder.format_type())
+                .body(axum::body::Body::from(buffer))
+                .unwrap_or_default()
+                .into_response();
         }
     }
     axum::http::StatusCode::UNAUTHORIZED.into_response()
@@ -544,7 +547,7 @@ async fn main() -> anyhow::Result<()> {
                 interval.tick().await;
                 let cutoff = Instant::now() - Duration::from_secs(3600);
                 rate_limiter.retain(|_, bucket_mutex| {
-                    if let Ok(bucket) = bucket_mutex.lock() {
+                    if let Ok(bucket) = bucket_mutex.get_mut() {
                         bucket.last_update >= cutoff
                     } else {
                         true

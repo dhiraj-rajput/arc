@@ -126,7 +126,7 @@ impl MachineCapacity {
         }
         // Use physical cores (not logical) to avoid HT contention on pure compute
         let base = self.physical_cpus;
-        base.min(64).max(1)
+        base.clamp(1, 64)
     }
 
     /// Optimal chunk size in bytes for a file of the given size.
@@ -144,7 +144,7 @@ impl MachineCapacity {
         match file_size {
             0..=65_535 => file_size as u32, // whole file, no chunking
             65_536..=1_048_575 => (256 * KB) as u32,
-            1_048_576..=104_857_599 => (1 * MB) as u32,
+            1_048_576..=104_857_599 => MB as u32,
             104_857_600..=1_073_741_823 => (4 * MB) as u32,
             _ => (8 * MB) as u32,
         }
@@ -183,7 +183,7 @@ impl MachineCapacity {
     /// the current network send position).
     pub fn read_ahead_chunks(&self) -> usize {
         // Scale with physical CPUs so disk I/O saturates the CPU pipeline
-        (self.physical_cpus * 2).min(32).max(2)
+        (self.physical_cpus * 2).clamp(2, 32)
     }
 }
 
@@ -212,7 +212,7 @@ mod tests {
         assert_eq!(cap.optimal_chunk_size(500_000), 256 * 1024);
 
         // 1 MB for medium files
-        assert_eq!(cap.optimal_chunk_size(10 * 1024 * 1024), 1 * 1024 * 1024);
+        assert_eq!(cap.optimal_chunk_size(10 * 1024 * 1024), 1024 * 1024);
 
         // 4 MB for large files
         assert_eq!(

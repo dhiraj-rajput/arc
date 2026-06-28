@@ -19,6 +19,7 @@ use super::transport::{
     encrypt_signal, decrypt_signal, WsJoin, WsSignal, WsRelayMessage, HandshakePayload, RateLimiter,
 };
 
+#[allow(clippy::too_many_arguments)]
 async fn run_quic_sender_session(
     conn: &iroh::endpoint::Connection,
     path: &Path,
@@ -166,15 +167,15 @@ async fn run_quic_sender_session(
     let pipeline_tx = pipeline.clone_tx().expect("pipeline should be open");
     let accepted_bitmap_reader = resume_bitmap.clone().or(accepted_bitmap.clone());
     tokio::spawn(async move {
-        let mut file = match std::fs::File::open(&path_clone) {
+        let mut file = match tokio::fs::File::open(&path_clone).await {
             Ok(f) => f,
             Err(e) => {
                 tracing::error!(?path_clone, "Failed to open file for streaming: {:?}", e);
                 return;
             }
         };
-        use std::io::Read;
-        use std::io::Seek;
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncSeekExt;
         use std::io::SeekFrom;
         let mut buf = vec![0u8; chunk_size];
         let mut index = 0u32;
@@ -194,7 +195,7 @@ async fn run_quic_sender_session(
 
             if skip_chunk {
                 // Seek past this chunk
-                if let Err(e) = file.seek(SeekFrom::Current(chunk_size as i64)) {
+                if let Err(e) = file.seek(SeekFrom::Current(chunk_size as i64)).await {
                     tracing::error!(index, "Failed to seek file: {:?}", e);
                     break;
                 }
@@ -204,7 +205,7 @@ async fn run_quic_sender_session(
 
             let mut bytes_read = 0;
             while bytes_read < chunk_size {
-                match file.read(&mut buf[bytes_read..]) {
+                match file.read(&mut buf[bytes_read..]).await {
                     Ok(0) => break, // EOF
                     Ok(n) => bytes_read += n,
                     Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
@@ -261,8 +262,8 @@ async fn run_quic_sender_session(
 
     let start_time = Instant::now();
     let mut sent_chunks = 0u32;
-    if let Some(ref bitmap) = resume_bitmap.as_ref().or(accepted_bitmap.as_ref()) {
-        for byte in *bitmap {
+    if let Some(bitmap) = resume_bitmap.as_ref().or(accepted_bitmap.as_ref()) {
+        for &byte in bitmap {
             sent_chunks += byte.count_ones();
         }
     }
@@ -636,7 +637,7 @@ pub async fn run_sender(
         if let Message::Text(text) = msg {
             if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
                 match relay_msg {
-                    WsRelayMessage::Joined { member_count, .. } if member_count == 2 => {
+                    WsRelayMessage::Joined { member_count: 2, .. } => {
                         if !handshake_sent {
                             let handshake_bytes = serde_json::to_vec(&handshake_out)?;
                             let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
@@ -846,7 +847,7 @@ pub async fn run_stdin_sender(
         if let Message::Text(text) = msg {
             if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
                 match relay_msg {
-                    WsRelayMessage::Joined { member_count, .. } if member_count == 2 => {
+                    WsRelayMessage::Joined { member_count: 2, .. } => {
                         if !handshake_sent {
                             let handshake_bytes = serde_json::to_vec(&handshake_out)?;
                             let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;

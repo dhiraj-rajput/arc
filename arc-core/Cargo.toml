@@ -43,9 +43,6 @@ pqcrypto-mldsa = { version = "0.1.2", optional = true }
 zstd = "0.13.3"
 lz4_flex = "0.13.1"
 
-# === Content-Defined Chunking (FastCDC for delta transfer) ===
-fastcdc = { version = "4.0.1", features = ["tokio"] }
-
 # === I/O ===
 memmap2 = "0.9.11"
 bytes = "1.12.0"

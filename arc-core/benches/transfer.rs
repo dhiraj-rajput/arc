@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 
 fn bench_blake3_hashing(c: &mut Criterion) {

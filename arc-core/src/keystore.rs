@@ -9,9 +9,18 @@ use keyring::Entry;
 const SERVICE_NAME: &str = "sh.arc.identity";
 const USER_NAME: &str = "device_key";
 
+fn get_entry() -> Result<Entry, keyring::Error> {
+    let service = if let Ok(suffix) = std::env::var("ARC_KEYRING_SUFFIX") {
+        format!("{}.{}", SERVICE_NAME, suffix)
+    } else {
+        SERVICE_NAME.to_string()
+    };
+    Entry::new(&service, USER_NAME)
+}
+
 /// Retrieve the 32-byte device identity secret from the OS keystore.
 pub fn get_identity_secret() -> Result<[u8; 32], anyhow::Error> {
-    let entry = Entry::new(SERVICE_NAME, USER_NAME)?;
+    let entry = get_entry()?;
     let password = entry.get_password()?;
     let decoded = hex::decode(password)?;
     if decoded.len() == 32 {
@@ -25,7 +34,7 @@ pub fn get_identity_secret() -> Result<[u8; 32], anyhow::Error> {
 
 /// Store the 32-byte device identity secret in the OS keystore.
 pub fn set_identity_secret(secret: &[u8; 32]) -> Result<(), anyhow::Error> {
-    let entry = Entry::new(SERVICE_NAME, USER_NAME)?;
+    let entry = get_entry()?;
     let encoded = hex::encode(secret);
     entry.set_password(&encoded)?;
     Ok(())
@@ -33,7 +42,7 @@ pub fn set_identity_secret(secret: &[u8; 32]) -> Result<(), anyhow::Error> {
 
 /// Delete the device identity secret from the OS keystore.
 pub fn delete_identity_secret() -> Result<(), anyhow::Error> {
-    let entry = Entry::new(SERVICE_NAME, USER_NAME)?;
+    let entry = get_entry()?;
     entry.delete_credential()?;
     Ok(())
 }

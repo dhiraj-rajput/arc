@@ -151,14 +151,30 @@ pub fn negotiate_capabilities(
     ours: &[CapabilityTLV],
     theirs: &[CapabilityTLV],
 ) -> Result<Vec<CapabilityTLV>, NegotiationError> {
-    let their_types: std::collections::HashSet<CapabilityType> =
-        theirs.iter().map(|c| c.cap_type).collect();
+    let mut result = Vec::new();
 
-    let result: Vec<CapabilityTLV> = ours
-        .iter()
-        .filter(|c| their_types.contains(&c.cap_type))
-        .cloned()
-        .collect();
+    for our_cap in ours {
+        if let Some(their_cap) = theirs.iter().find(|c| c.cap_type == our_cap.cap_type) {
+            let negotiated_value = if our_cap.value.is_empty() || their_cap.value.is_empty() {
+                vec![]
+            } else if our_cap.value.len() == 1 && their_cap.value.len() == 1 {
+                vec![std::cmp::min(our_cap.value[0], their_cap.value[0])]
+            } else if our_cap.value.len() == 4 && their_cap.value.len() == 4 {
+                if let (Some(v1), Some(v2)) = (our_cap.as_u32(), their_cap.as_u32()) {
+                    std::cmp::min(v1, v2).to_le_bytes().to_vec()
+                } else {
+                    our_cap.value.clone()
+                }
+            } else {
+                our_cap.value.clone()
+            };
+
+            result.push(CapabilityTLV {
+                cap_type: our_cap.cap_type,
+                value: negotiated_value,
+            });
+        }
+    }
 
     if result.is_empty() {
         return Err(NegotiationError::EmptyIntersection);
@@ -210,10 +226,29 @@ mod tests {
     fn test_default_capabilities_non_empty() {
         let caps = default_capabilities();
         assert!(!caps.is_empty(), "must have at least some default capabilities");
-        // BLAKE3 streaming must always be present
         assert!(
             caps.iter().any(|c| c.cap_type == CapabilityType::Blake3VerifiedStreaming),
             "BLAKE3 verified streaming must be in defaults"
         );
+    }
+
+    #[test]
+    fn test_negotiate_capabilities_parameters() {
+        let ours = vec![
+            CapabilityTLV::with_u8(CapabilityType::CompressionZstd, 9),
+            CapabilityTLV::with_u32(CapabilityType::QuicMultipath, 42000),
+        ];
+        let theirs = vec![
+            CapabilityTLV::with_u8(CapabilityType::CompressionZstd, 3),
+            CapabilityTLV::with_u32(CapabilityType::QuicMultipath, 50000),
+        ];
+        let negotiated = negotiate_capabilities(&ours, &theirs).unwrap();
+        assert_eq!(negotiated.len(), 2);
+        
+        let zstd_cap = negotiated.iter().find(|c| c.cap_type == CapabilityType::CompressionZstd).unwrap();
+        assert_eq!(zstd_cap.as_u8(), Some(3)); // Minimum of 9 and 3
+        
+        let mp_cap = negotiated.iter().find(|c| c.cap_type == CapabilityType::QuicMultipath).unwrap();
+        assert_eq!(mp_cap.as_u32(), Some(42000)); // Minimum of 42000 and 50000
     }
 }

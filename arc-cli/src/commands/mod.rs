@@ -5,3 +5,4 @@ pub mod peers;
 pub mod config;
 pub mod relay;
 pub mod discover;
+pub mod clipboard;

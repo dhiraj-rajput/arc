@@ -255,7 +255,7 @@ impl MerkleTree {
         let mut n = leaf_count;
         while n > 1 {
             expected_proof_len += 1;
-            n = (n + 1) / 2;
+            n = n.div_ceil(2);
         }
         if proof.len() != expected_proof_len {
             return false;
@@ -281,7 +281,7 @@ impl MerkleTree {
             };
             current_hash = parent;
             idx /= 2;
-            level_size = (level_size + 1) / 2;
+            level_size = level_size.div_ceil(2);
         }
 
         &current_hash == root
