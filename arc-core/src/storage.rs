@@ -198,8 +198,19 @@ pub fn wipe_config() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Load the device identity and config. Integrates OS keystore with fallback.
+tokio::task_local! {
+    pub static TEST_IDENTITY: [u8; 32];
+}
+
 pub fn get_or_create_identity() -> Result<(DeviceIdentity, ArcConfig), anyhow::Error> {
+    let (mut identity, config) = get_or_create_identity_internal()?;
+    if let Some(secret) = TEST_IDENTITY.try_with(|s| *s).ok() {
+        identity = DeviceIdentity::from_secret_bytes(&secret);
+    }
+    Ok((identity, config))
+}
+
+fn get_or_create_identity_internal() -> Result<(DeviceIdentity, ArcConfig), anyhow::Error> {
     let path = get_config_path();
     let secret_from_keystore = crate::keystore::get_identity_secret().ok();
 

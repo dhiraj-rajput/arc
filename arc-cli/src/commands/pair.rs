@@ -36,7 +36,7 @@ pub async fn exec_pair(
             println!("{}", image);
         }
 
-        run_pairing_sender(&display_name, &code, relay_url).await?;
+        run_pairing_sender(&code, relay_url, &display_name).await?;
         println!("\n🎉 Pairing completed successfully! Device '{}' is now authorized.", display_name);
     } else {
         let code = dialoguer::Input::<String>::with_theme(&dialoguer::theme::SimpleTheme)
@@ -47,7 +47,7 @@ pub async fn exec_pair(
         println!("===============");
         println!("Connecting to relay and authenticating identity keys...");
 
-        run_pairing_receiver(&display_name, &code, relay_url).await?;
+        run_pairing_receiver(&code, relay_url, &display_name).await?;
         println!("\n🎉 Pairing completed successfully! Device '{}' is now authorized.", display_name);
     }
     Ok(())

@@ -137,7 +137,7 @@ pub(crate) struct HandshakePayload {
 pub async fn run_pairing_sender(
     phrase: &str,
     relay_url: &str,
-    _device_name: &str,
+    device_name: &str,
 ) -> Result<[u8; 32], anyhow::Error> {
     let phrase_seed = crate::crypto::derive_key_from_phrase(phrase);
     let room_id = hex::encode(blake3::hash(&phrase_seed).as_bytes());
@@ -198,7 +198,7 @@ pub async fn run_pairing_sender(
     let dummy_node_addr = iroh::EndpointAddr::new(node_id);
     let handshake_out = HandshakePayload {
         device_id: identity.device_id(),
-        device_name: config.device_name.clone(),
+        device_name: device_name.to_string(),
         node_addr: dummy_node_addr,
         ephemeral_public: [0u8; 32],
         nonce: our_nonce,
@@ -230,7 +230,7 @@ pub async fn run_pairing_sender(
 pub async fn run_pairing_receiver(
     phrase: &str,
     relay_url: &str,
-    _device_name: &str,
+    device_name: &str,
 ) -> Result<([u8; 32], String), anyhow::Error> {
     let phrase_seed = crate::crypto::derive_key_from_phrase(phrase);
     let room_id = hex::encode(blake3::hash(&phrase_seed).as_bytes());
@@ -260,7 +260,7 @@ pub async fn run_pairing_receiver(
     let dummy_node_addr = iroh::EndpointAddr::new(node_id);
     let handshake_out = HandshakePayload {
         device_id: identity.device_id(),
-        device_name: config.device_name.clone(),
+        device_name: device_name.to_string(),
         node_addr: dummy_node_addr,
         ephemeral_public: [0u8; 32],
         nonce: our_nonce,
