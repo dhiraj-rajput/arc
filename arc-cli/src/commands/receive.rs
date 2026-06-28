@@ -2,7 +2,8 @@ use std::path::Path;
 use tokio::sync::mpsc;
 use arc_core::get_identity_with_merged_config;
 use arc_core::transfer::orchestrator::run_receiver;
-use crate::setup_progress_bar;
+use crate::ui::spawn_progress_task;
+use crate::ui::validate_passphrase;
 use tokio::io::AsyncWriteExt;
 
 pub async fn exec_receive(
@@ -11,6 +12,12 @@ pub async fn exec_receive(
     stdout: bool,
     relay_override: Option<String>,
 ) -> anyhow::Result<()> {
+    if !validate_passphrase(&phrase) {
+        return Err(anyhow::anyhow!(
+            "Invalid passphrase format. Must be 6 hyphen-separated alphabetic words."
+        ));
+    }
+
     let (_, config) = get_identity_with_merged_config()?;
     let relay_url = relay_override.as_deref().unwrap_or(&config.relay_url);
 
@@ -32,22 +39,8 @@ pub async fn exec_receive(
         }
     });
 
-    let (tx, mut rx) = mpsc::channel(16);
-    tokio::spawn(async move {
-        let mut pb = None;
-        while let Some((curr, total)) = rx.recv().await {
-            if pb.is_none() {
-                let progress = setup_progress_bar(total as u64, false);
-                pb = Some(progress);
-            }
-            if let Some(ref progress_bar) = pb {
-                progress_bar.set_position(curr as u64);
-                if total > 0 && curr == total {
-                    progress_bar.finish_with_message("Done");
-                }
-            }
-        }
-    });
+    let (tx, rx) = mpsc::channel(16);
+    spawn_progress_task(rx, false);
 
     let stdout_tx_opt = if stdout { Some(stdout_tx) } else { None };
     let clipboard_content = run_receiver(&dir, &phrase, relay_url, Some(tx), stdout_tx_opt).await?;

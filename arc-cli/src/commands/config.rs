@@ -49,7 +49,28 @@ pub async fn exec_config(cmd: ConfigCommands) -> anyhow::Result<()> {
                 "dns_probe_ipv6" => {
                     config.dns_probe_ipv6 = value;
                 }
-                _ => return Err(anyhow::anyhow!("Unknown configuration key: '{}'", key)),
+                "quic_connect_timeout_ms" => {
+                    let ms: u64 = value
+                        .parse()
+                        .map_err(|e| anyhow::anyhow!("Invalid integer for quic_connect_timeout_ms: {}", e))?;
+                    config.transport.quic_connect_timeout_ms = ms;
+                }
+                "p2p_racing_timeout_ms" => {
+                    let ms: u64 = value
+                        .parse()
+                        .map_err(|e| anyhow::anyhow!("Invalid integer for p2p_racing_timeout_ms: {}", e))?;
+                    config.transport.p2p_racing_timeout_ms = ms;
+                }
+                "mdns_browse_timeout_ms" => {
+                    let ms: u64 = value
+                        .parse()
+                        .map_err(|e| anyhow::anyhow!("Invalid integer for mdns_browse_timeout_ms: {}", e))?;
+                    config.transport.mdns_browse_timeout_ms = ms;
+                }
+                _ => return Err(anyhow::anyhow!(
+                    "Unknown configuration key: '{}'. Valid keys: device_name, relay_url, max_upload_mbps, dns_probe_ipv4, dns_probe_ipv6, quic_connect_timeout_ms, p2p_racing_timeout_ms, mdns_browse_timeout_ms",
+                    key
+                )),
             }
             save_config(&config)?;
             println!("Successfully set '{}' and saved configuration.", key);

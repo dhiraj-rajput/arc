@@ -67,8 +67,13 @@ fn default_dns_probe_ipv6() -> String {
     "[2001:4860:4860::8888]:80".to_string()
 }
 
-/// Returns the configuration file path using `dirs::config_dir()`
-pub fn get_config_path() -> PathBuf {
+/// Environment variable override for the arc config directory (used in tests).
+pub const ENV_CONFIG_DIR: &str = "ARC_CONFIG_DIR";
+
+fn config_base_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var(ENV_CONFIG_DIR) {
+        return PathBuf::from(dir);
+    }
     let mut p = dirs::config_dir().unwrap_or_else(|| {
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
@@ -78,8 +83,12 @@ pub fn get_config_path() -> PathBuf {
         path
     });
     p.push("arc");
-    p.push("config.json");
     p
+}
+
+/// Returns the configuration file path using `dirs::config_dir()` or `ARC_CONFIG_DIR`.
+pub fn get_config_path() -> PathBuf {
+    config_base_dir().join("config.json")
 }
 
 /// Load configuration from disk.
@@ -292,32 +301,25 @@ fn get_or_create_identity_internal() -> Result<(DeviceIdentity, ArcConfig), anyh
 // ─── SQLite DB APIs ───────────────────────────────────────────────────────────
 
 /// Returns the SQLite database file path.
-#[cfg(not(test))]
 pub fn get_db_path() -> PathBuf {
-    let mut p = dirs::config_dir().unwrap_or_else(|| {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string());
-        let mut path = PathBuf::from(home);
-        path.push(".config");
-        path
-    });
-    p.push("arc");
-    p.push("arc.db");
-    p
-}
-
-/// Returns a unique temporary SQLite database file path for unit tests.
-#[cfg(test)]
-pub fn get_db_path() -> PathBuf {
-    thread_local! {
-        static TEST_DB_PATH: PathBuf = {
-            let mut p = std::env::temp_dir();
-            p.push(format!("arc_test_{}.db", uuid::Uuid::new_v4()));
-            p
-        };
+    if std::env::var(ENV_CONFIG_DIR).is_ok() {
+        return config_base_dir().join("arc.db");
     }
-    TEST_DB_PATH.with(|p| p.clone())
+    #[cfg(test)]
+    {
+        thread_local! {
+            static TEST_DB_PATH: PathBuf = {
+                let mut p = std::env::temp_dir();
+                p.push(format!("arc_test_{}.db", uuid::Uuid::new_v4()));
+                p
+            };
+        }
+        return TEST_DB_PATH.with(|p| p.clone());
+    }
+    #[cfg(not(test))]
+    {
+        config_base_dir().join("arc.db")
+    }
 }
 
 /// Get a connection to the SQLite database and initialize tables if needed.
@@ -455,6 +457,33 @@ mod tests {
         let db_path = get_db_path();
         if db_path.exists() {
             let _ = std::fs::remove_file(db_path);
+        }
+    }
+
+    #[test]
+    fn test_arc_config_dir_override() {
+        let temp = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var(ENV_CONFIG_DIR, temp.path());
+        }
+        let path = get_config_path();
+        assert!(path.starts_with(temp.path()));
+
+        let config = ArcConfig {
+            device_name: "isolated".to_string(),
+            identity_secret: Some([0x11; 32]),
+            peers: vec![],
+            relay_url: "ws://localhost".to_string(),
+            max_upload_mbps: None,
+            dns_probe_ipv4: default_dns_probe_ipv4(),
+            dns_probe_ipv6: default_dns_probe_ipv6(),
+            transport: TransportConfig::default(),
+        };
+        save_config(&config).expect("save");
+        let loaded = load_config().expect("load");
+        assert_eq!(loaded.device_name, "isolated");
+        unsafe {
+            std::env::remove_var(ENV_CONFIG_DIR);
         }
     }
 

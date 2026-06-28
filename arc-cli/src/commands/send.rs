@@ -3,8 +3,8 @@ use tokio::sync::mpsc;
 use arc_core::get_identity_with_merged_config;
 use arc_core::transfer::orchestrator::run_sender;
 use arc_core::transfer::orchestrator::run_stdin_sender;
-use crate::generate_phrase;
-use crate::setup_progress_bar;
+use crate::ui::generate_phrase;
+use crate::ui::spawn_progress_task;
 
 pub async fn exec_send(
     path: Option<String>,
@@ -32,22 +32,8 @@ pub async fn exec_send(
             code
         };
 
-        let (tx, mut rx) = mpsc::channel(16);
-        tokio::spawn(async move {
-            let mut pb = None;
-            while let Some((curr, _)) = rx.recv().await {
-                if pb.is_none() {
-                    let progress = setup_progress_bar(0, true);
-                    pb = Some(progress);
-                }
-                if let Some(ref progress_bar) = pb {
-                    progress_bar.set_position(curr as u64);
-                }
-            }
-            if let Some(ref progress_bar) = pb {
-                progress_bar.finish_with_message("Done");
-            }
-        });
+        let (tx, rx) = mpsc::channel(16);
+        spawn_progress_task(rx, true);
 
         run_stdin_sender(&stdin_name, &phrase, relay_url, Some(tx)).await?;
     } else {
@@ -102,22 +88,8 @@ pub async fn exec_send(
             code
         };
 
-        let (tx, mut rx) = mpsc::channel(16);
-        tokio::spawn(async move {
-            let mut pb = None;
-            while let Some((curr, total)) = rx.recv().await {
-                if pb.is_none() {
-                    let progress = setup_progress_bar(total as u64, true);
-                    pb = Some(progress);
-                }
-                if let Some(ref progress_bar) = pb {
-                    progress_bar.set_position(curr as u64);
-                    if curr == total {
-                        progress_bar.finish_with_message("Done");
-                    }
-                }
-            }
-        });
+        let (tx, rx) = mpsc::channel(16);
+        spawn_progress_task(rx, true);
 
         run_sender(&file_path, &phrase, relay_url, share, clipboard, Some(tx)).await?;
     }

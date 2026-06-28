@@ -55,3 +55,29 @@ jobs:
         run: cargo install cargo-audit
       - name: Run audit
         run: cargo audit
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run integration and CLI E2E tests
+        run: |
+          cargo test -p arc-core --test integration_tests
+          cargo test -p arc-core --test edge_cases
+          cargo test -p arc-cli --test e2e_commands
+          cargo test -p arc-cli --test security
+          cargo test -p arc-relay --test relay_security
+
+  perf-smoke:
+    name: Perf Smoke
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run benchmark smoke tests
+        run: cargo bench -p arc-core -- --sample-size 10

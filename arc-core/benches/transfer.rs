@@ -84,5 +84,25 @@ fn bench_encryption(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_blake3_hashing, bench_compression, bench_encryption);
+fn bench_file_hash_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("file_hash_throughput");
+    for size_mb in [1usize, 64] {
+        let data: Vec<u8> = (0..size_mb * 1024 * 1024)
+            .map(|i| (i % 256) as u8)
+            .collect();
+        group.bench_with_input(
+            BenchmarkId::new("blake3_full", format!("{size_mb}MB")),
+            &data,
+            |b, data| {
+                b.iter(|| {
+                    let hash = blake3::hash(data);
+                    criterion::black_box(hash);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_blake3_hashing, bench_compression, bench_encryption, bench_file_hash_throughput);
 criterion_main!(benches);

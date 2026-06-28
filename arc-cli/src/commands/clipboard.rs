@@ -15,6 +15,12 @@ struct ClipboardPayload {
 }
 
 pub async fn exec_clipboard_sync(phrase: String, relay_override: Option<String>) -> anyhow::Result<()> {
+    if !crate::ui::validate_passphrase(&phrase) {
+        return Err(anyhow::anyhow!(
+            "Invalid passphrase format. Must be 6 hyphen-separated alphabetic words."
+        ));
+    }
+
     let (identity, config) = get_identity_with_merged_config()?;
     let relay_url = relay_override.as_deref().unwrap_or(&config.relay_url);
     

@@ -1,10 +1,11 @@
 use arc_core::get_identity_with_merged_config;
 use arc_core::transfer::orchestrator::{run_pairing_sender, run_pairing_receiver};
-use crate::generate_phrase;
+use crate::ui::generate_phrase;
 
 pub async fn exec_pair(
     name: Option<String>,
     initiator: bool,
+    code: Option<String>,
     joiner: Option<String>,
     relay_override: Option<String>,
 ) -> anyhow::Result<()> {
@@ -27,15 +28,15 @@ pub async fn exec_pair(
     };
 
     if is_initiator {
-        let code = generate_phrase();
+        let pairing_code = code.unwrap_or_else(generate_phrase);
         println!("\nPairing Initiated!");
         println!("==================");
         println!("Provide this membrane pairing code to your other device:");
-        println!("\n    👉 \x1b[1;36m{}\x1b[0m 👈\n", code);
+        println!("\n    👉 \x1b[1;36m{}\x1b[0m 👈\n", pairing_code);
         println!("Waiting for the other device to connect and authenticate...");
 
         // Generate dynamic QR code for pairing
-        if let Ok(code_obj) = qrcode::QrCode::new(code.as_bytes()) {
+        if let Ok(code_obj) = qrcode::QrCode::new(pairing_code.as_bytes()) {
             let image = code_obj
                 .render::<qrcode::render::unicode::Dense1x2>()
                 .dark_color(qrcode::render::unicode::Dense1x2::Light)
@@ -45,7 +46,7 @@ pub async fn exec_pair(
             println!("{}", image);
         }
 
-        run_pairing_sender(&code, relay_url, &display_name).await?;
+        run_pairing_sender(&pairing_code, relay_url, &display_name).await?;
         println!("\n🎉 Pairing completed successfully! Device '{}' is now authorized.", display_name);
     } else {
         let code = if let Some(code_val) = joiner {

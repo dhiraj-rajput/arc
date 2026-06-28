@@ -23,6 +23,6 @@ pub mod config;
 pub use machine::MachineCapacity;
 pub use protocol::messages::ArcMessage;
 pub use security::{safe_display_name, validate_path_component, safe_unpack_tar, SandboxPolicy};
-pub use storage::{get_or_create_identity, load_config, save_config, wipe_config, ArcConfig, PeerInfo, TransferHistoryEntry, add_transfer_history, get_transfer_history, get_db_conn, get_db_path};
+pub use storage::{get_or_create_identity, load_config, save_config, wipe_config, ArcConfig, PeerInfo, TransferHistoryEntry, add_transfer_history, get_transfer_history, get_db_conn, get_db_path, ENV_CONFIG_DIR};
 pub use config::{load_merged_config, get_identity_with_merged_config};
 pub use crypto::hash::{blake3_hash_file, blake3_hash_dir};
