@@ -17,7 +17,7 @@ if (-not (Test-Path $installDir)) {
 
 Write-Host "Downloading arc from $url..." -ForegroundColor Gray
 # Download
-Invoke-RestMethod -Uri $url -OutFile $zipPath
+Invoke-WebRequest -Uri $url -OutFile $zipPath
 
 Write-Host "Extracting archive..." -ForegroundColor Gray
 # Extract

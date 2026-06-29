@@ -45,9 +45,9 @@ trap 'rm -rf "$TEMP_DIR"' EXIT
 
 # Download and extract
 if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$URL" -o "$TEMP_DIR/arc.tar.gz"
+  curl -fL -# "$URL" -o "$TEMP_DIR/arc.tar.gz"
 elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$TEMP_DIR/arc.tar.gz" "$URL"
+  wget -O "$TEMP_DIR/arc.tar.gz" --show-progress "$URL"
 else
   echo "Error: Neither curl nor wget was found. Please install one of them."
   exit 1
