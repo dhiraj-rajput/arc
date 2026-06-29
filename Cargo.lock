@@ -193,6 +193,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "dialoguer",
+ "dirs",
  "futures-util",
  "hex",
  "indicatif",

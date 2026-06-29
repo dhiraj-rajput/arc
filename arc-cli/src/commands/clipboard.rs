@@ -3,9 +3,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
-use crate::clipboard::{
-    ClipboardContent, ClipboardEvent, ClipboardWatcher, apply_remote_clipboard,
-};
+use crate::clipboard::{ClipboardContent, ClipboardWatcher};
 use arc_core::get_identity_with_merged_config;
 use arc_core::transfer::orchestrator::transport::{
     WsJoin, WsRelayMessage, WsSignal, decrypt_signal, encrypt_signal,
@@ -111,15 +109,12 @@ pub async fn exec_clipboard_sync(
                         .and_then(|decrypted| serde_json::from_slice::<ClipboardPayload>(&decrypted).map_err(|e| anyhow::anyhow!(e)));
 
                     if let Ok(payload) = payload_res {
-                        let event = ClipboardEvent {
-                            sequence: payload.sequence,
-                            source_device_id: payload.source_device_id,
-                            content: ClipboardContent::Text(payload.text),
-                        };
-                        match apply_remote_clipboard(&event, &device_id) {
-                            Ok(true) => println!("Applied remote clipboard update (seq: {})", event.sequence),
-                            Ok(false) => {}, // Echo filter
-                            Err(e) => eprintln!("Failed to apply remote clipboard: {:?}", e),
+                        let is_remote = payload.source_device_id != device_id;
+                        if is_remote {
+                            println!(
+                                "\n📋 Received Shared Clipboard Text:\n----------------------------------------\n{}\n----------------------------------------",
+                                payload.text
+                            );
                         }
                     }
                 }

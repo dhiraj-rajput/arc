@@ -127,6 +127,30 @@ pub fn generate_phrase() -> String {
     words.join("-")
 }
 
+pub fn derive_deterministic_phrase(id1: &[u8; 32], id2: &[u8; 32]) -> String {
+    let mut ids = [*id1, *id2];
+    ids.sort();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&ids[0]);
+    hasher.update(&ids[1]);
+    let hash = hasher.finalize();
+    let hash_bytes = hash.as_bytes();
+
+    let mut words = Vec::new();
+    for i in 0..6 {
+        let start = i * 4;
+        let val = u32::from_le_bytes([
+            hash_bytes[start],
+            hash_bytes[start + 1],
+            hash_bytes[start + 2],
+            hash_bytes[start + 3],
+        ]);
+        let idx = (val as usize) % WORDLIST.len();
+        words.push(WORDLIST[idx]);
+    }
+    words.join("-")
+}
+
 pub fn validate_passphrase(phrase: &str) -> bool {
     let parts: Vec<&str> = phrase.split('-').collect();
     if parts.len() != 6 {
@@ -183,6 +207,65 @@ pub fn spawn_progress_task(mut rx: tokio::sync::mpsc::Receiver<(u32, u32)>, is_s
             }
         }
     });
+}
+
+pub struct PathCompleter;
+
+impl dialoguer::Completion for PathCompleter {
+    fn get(&self, input: &str) -> Option<String> {
+        let path = std::path::Path::new(input);
+
+        let (dir_path, file_prefix) = if input.is_empty() {
+            (std::path::Path::new("."), "")
+        } else if input.ends_with('/') || input.ends_with('\\') {
+            (path, "")
+        } else {
+            match path.parent() {
+                Some(parent) => {
+                    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if parent.as_os_str().is_empty() {
+                        (std::path::Path::new("."), file_name)
+                    } else {
+                        (parent, file_name)
+                    }
+                }
+                None => (std::path::Path::new("."), input),
+            }
+        };
+
+        if let Ok(entries) = std::fs::read_dir(dir_path) {
+            let mut candidates = Vec::new();
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    let matched = if cfg!(target_os = "windows") {
+                        name.to_lowercase().starts_with(&file_prefix.to_lowercase())
+                    } else {
+                        name.starts_with(file_prefix)
+                    };
+                    if matched {
+                        candidates.push(entry.path());
+                    }
+                }
+            }
+
+            if !candidates.is_empty() {
+                if candidates.len() == 1 {
+                    let mut path_str = candidates[0].to_string_lossy().to_string();
+                    if candidates[0].is_dir() {
+                        path_str.push(std::path::MAIN_SEPARATOR);
+                    }
+                    return Some(path_str);
+                }
+
+                let mut path_str = candidates[0].to_string_lossy().to_string();
+                if candidates[0].is_dir() {
+                    path_str.push(std::path::MAIN_SEPARATOR);
+                }
+                return Some(path_str);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]

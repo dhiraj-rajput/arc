@@ -6,7 +6,10 @@ pub mod clipboard;
 pub mod commands;
 mod ui;
 
-pub use ui::{generate_phrase, setup_progress_bar, validate_passphrase};
+pub use ui::{
+    PathCompleter, derive_deterministic_phrase, generate_phrase, setup_progress_bar,
+    validate_passphrase,
+};
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -175,9 +178,11 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     let filter = if cli.verbose {
-        EnvFilter::new("arc=debug,arc_core=debug")
+        EnvFilter::new("arc=debug,arc_core=debug,arc_cli=debug,arc_relay=debug")
     } else {
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("arc=info"))
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new("arc=error,arc_core=error,arc_cli=error,arc_relay=error")
+        })
     };
 
     if cli.json {
@@ -304,30 +309,148 @@ async fn run_interactive_menu() -> anyhow::Result<()> {
         match selection {
             0 => {
                 let path: String = Input::with_theme(&theme)
-                    .with_prompt("Path to the file or directory to send")
+                    .with_prompt("Path to the file or directory to send (type 'back' to cancel)")
+                    .completion_with(&PathCompleter)
                     .interact_text()?;
-                commands::send::exec_send(Some(path), None, false, false, None, false, None, None)
-                    .await?;
+                if path.trim() == "back" || path.trim() == "exit" || path.trim().is_empty() {
+                    println!("Operation cancelled.");
+                    continue;
+                }
+
+                let (_, config) = arc_core::get_identity_with_merged_config()?;
+                let mut send_to_peer = None;
+                if !config.peers.is_empty() {
+                    let mut peer_choices =
+                        vec!["One-shot transfer (using a 6-word phrase)".to_string()];
+                    for peer in &config.peers {
+                        peer_choices.push(format!("Paired device: {}", peer.name));
+                    }
+                    let peer_sel = Select::with_theme(&theme)
+                        .with_prompt("Select target recipient")
+                        .default(0)
+                        .items(&peer_choices)
+                        .interact()?;
+                    if peer_sel > 0 {
+                        send_to_peer = Some(config.peers[peer_sel - 1].name.clone());
+                    }
+                }
+
+                commands::send::exec_send(
+                    Some(path),
+                    send_to_peer,
+                    false,
+                    false,
+                    None,
+                    false,
+                    None,
+                    None,
+                )
+                .await?;
             }
             1 => {
-                let phrase: String = Input::with_theme(&theme)
-                    .with_prompt("Enter the 6-word phrase/code")
-                    .interact_text()?;
+                let (_, config) = arc_core::get_identity_with_merged_config()?;
+                let mut phrase = None;
+                if !config.peers.is_empty() {
+                    let mut peer_choices = vec![
+                        "One-shot transfer (enter a 6-word phrase)".to_string(),
+                        "Cancel / Go Back".to_string(),
+                    ];
+                    for peer in &config.peers {
+                        peer_choices.push(format!("Receive from paired device: {}", peer.name));
+                    }
+                    let peer_sel = Select::with_theme(&theme)
+                        .with_prompt("Select source sender")
+                        .default(0)
+                        .items(&peer_choices)
+                        .interact()?;
+                    if peer_sel == 1 {
+                        println!("Operation cancelled.");
+                        continue;
+                    } else if peer_sel > 1 {
+                        let peer = &config.peers[peer_sel - 2];
+                        let identity = arc_core::get_identity_with_merged_config()?.0;
+                        let self_id = identity.device_id();
+                        phrase = Some(derive_deterministic_phrase(&self_id, &peer.device_id));
+                    }
+                }
+
+                let final_phrase = match phrase {
+                    Some(p) => p,
+                    None => {
+                        let p: String = Input::with_theme(&theme)
+                            .with_prompt("Enter the 6-word phrase/code (type 'back' to cancel)")
+                            .interact_text()?;
+                        if p.trim() == "back" || p.trim() == "exit" || p.trim().is_empty() {
+                            println!("Operation cancelled.");
+                            continue;
+                        }
+                        p
+                    }
+                };
+
+                let default_save_dir = dirs::download_dir()
+                    .map(|d| d.to_string_lossy().to_string())
+                    .unwrap_or_else(|| ".".to_string());
+
                 let dir: String = Input::with_theme(&theme)
                     .with_prompt("Save directory")
-                    .default(".".to_string())
+                    .default(default_save_dir)
                     .interact_text()?;
-                commands::receive::exec_receive(phrase, dir, false, None).await?;
+                if dir.trim() == "back" || dir.trim() == "exit" {
+                    println!("Operation cancelled.");
+                    continue;
+                }
+
+                commands::receive::exec_receive(final_phrase, dir, false, None).await?;
             }
             2 => commands::pair::exec_pair(None, false, None, None, None).await?,
             3 => commands::peers::exec_peers(PeersCommands::List).await?,
             4 => commands::config::exec_config(ConfigCommands::Show).await?,
             5 => commands::discover::exec_discover().await?,
             6 => {
-                let phrase: String = Input::with_theme(&theme)
-                    .with_prompt("Enter the 6-word phrase/code to sync over")
-                    .interact_text()?;
-                commands::clipboard::exec_clipboard_sync(phrase, None).await?;
+                let (_, config) = arc_core::get_identity_with_merged_config()?;
+                let mut phrase = None;
+                if !config.peers.is_empty() {
+                    let mut peer_choices = vec![
+                        "One-shot clipboard sync (enter a 6-word phrase)".to_string(),
+                        "Cancel / Go Back".to_string(),
+                    ];
+                    for peer in &config.peers {
+                        peer_choices.push(format!("Sync with paired device: {}", peer.name));
+                    }
+                    let peer_sel = Select::with_theme(&theme)
+                        .with_prompt("Select target device to sync with")
+                        .default(0)
+                        .items(&peer_choices)
+                        .interact()?;
+                    if peer_sel == 1 {
+                        println!("Operation cancelled.");
+                        continue;
+                    } else if peer_sel > 1 {
+                        let peer = &config.peers[peer_sel - 2];
+                        let identity = arc_core::get_identity_with_merged_config()?.0;
+                        let self_id = identity.device_id();
+                        phrase = Some(derive_deterministic_phrase(&self_id, &peer.device_id));
+                    }
+                }
+
+                let final_phrase = match phrase {
+                    Some(p) => p,
+                    None => {
+                        let p: String = Input::with_theme(&theme)
+                            .with_prompt(
+                                "Enter the 6-word phrase/code to sync over (type 'back' to cancel)",
+                            )
+                            .interact_text()?;
+                        if p.trim() == "back" || p.trim() == "exit" || p.trim().is_empty() {
+                            println!("Operation cancelled.");
+                            continue;
+                        }
+                        p
+                    }
+                };
+
+                commands::clipboard::exec_clipboard_sync(final_phrase, None).await?;
             }
             7 => {
                 let confirm = Confirm::with_theme(&theme)

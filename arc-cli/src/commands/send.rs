@@ -17,7 +17,7 @@ pub async fn exec_send(
     code: Option<String>,
     relay_override: Option<String>,
 ) -> anyhow::Result<()> {
-    let (_, config) = get_identity_with_merged_config()?;
+    let (identity, config) = get_identity_with_merged_config()?;
     let relay_url = relay_override.as_deref().unwrap_or(&config.relay_url);
 
     if stdin {
@@ -31,10 +31,11 @@ pub async fn exec_send(
                 .iter()
                 .find(|p| p.name == peer_name)
                 .ok_or_else(|| anyhow::anyhow!("Device not paired: {}", peer_name))?;
-            let generated = generate_phrase();
+            let self_id = identity.device_id();
+            let generated = crate::ui::derive_deterministic_phrase(&self_id, &peer.device_id);
             println!(
-                "Paired transfer to {}. Secret code: {}",
-                peer.name, generated
+                "Paired transfer to {}. Code derived automatically.",
+                peer.name
             );
             generated
         } else {
@@ -107,10 +108,11 @@ pub async fn exec_send(
                 .iter()
                 .find(|p| p.name == peer_name)
                 .ok_or_else(|| anyhow::anyhow!("Device not paired: {}", peer_name))?;
-            let generated = generate_phrase();
+            let self_id = identity.device_id();
+            let generated = crate::ui::derive_deterministic_phrase(&self_id, &peer.device_id);
             println!(
-                "Paired transfer to {}. Secret code: {}",
-                peer.name, generated
+                "Paired transfer to {}. Code derived automatically.",
+                peer.name
             );
             generated
         } else {
