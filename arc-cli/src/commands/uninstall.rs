@@ -19,15 +19,20 @@ pub async fn exec_uninstall() -> anyhow::Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        let exe_str = current_exe.to_string_lossy();
-        // Spawn background command to wait 1 second and then delete the exe
+        let mut exe_str = current_exe.to_string_lossy().to_string();
+        // cmd.exe's "del" command does not support UNC paths starting with \\?\
+        if exe_str.starts_with(r"\\?\") {
+            exe_str = exe_str[4..].to_string();
+        }
+
+        // Spawn background command to wait 1 second using ping (which is silent) and then delete the exe
         std::process::Command::new("cmd")
             .args([
                 "/c",
-                &format!("timeout /t 1 /nobreak && del /f /q \"{}\"", exe_str),
+                &format!("ping 127.0.0.1 -n 2 > nul && del /f /q \"{}\"", exe_str),
             ])
             .spawn()?;
-        println!("✨ arc has been uninstalled! The executable will be deleted in a second.");
+        println!("✨ arc has been uninstalled successfully!");
     }
 
     #[cfg(not(target_os = "windows"))]
