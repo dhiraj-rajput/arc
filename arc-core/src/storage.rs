@@ -306,14 +306,10 @@ fn get_or_create_identity_internal() -> Result<(DeviceIdentity, ArcConfig), anyh
         Ok((identity, config))
     }
 }
-
 // ─── SQLite DB APIs ───────────────────────────────────────────────────────────
 
 /// Returns the SQLite database file path.
 pub fn get_db_path() -> PathBuf {
-    if std::env::var(ENV_CONFIG_DIR).is_ok() {
-        return config_base_dir().join("arc.db");
-    }
     #[cfg(test)]
     {
         thread_local! {
@@ -327,6 +323,9 @@ pub fn get_db_path() -> PathBuf {
     }
     #[cfg(not(test))]
     {
+        if let Ok(val) = std::env::var(ENV_CONFIG_DIR) {
+            return PathBuf::from(val).join("arc.db");
+        }
         config_base_dir().join("arc.db")
     }
 }
