@@ -289,7 +289,7 @@ pub async fn run_pairing_sender(
         Ok(stream) => stream,
         Err(e) => {
             tracing::warn!(
-                "Failed to connect to public relay: {:?}. Falling back to local network pairing...",
+                "Failed to connect to public relay: {}. Falling back to local network pairing...",
                 e
             );
             println!("Public relay unreachable. Falling back to local network pairing (mDNS)...");
@@ -437,7 +437,7 @@ pub async fn run_pairing_receiver(
         Ok(stream) => stream,
         Err(e) => {
             tracing::warn!(
-                "Failed to connect to public relay: {:?}. Falling back to local network pairing...",
+                "Failed to connect to public relay: {}. Falling back to local network pairing...",
                 e
             );
             println!(
