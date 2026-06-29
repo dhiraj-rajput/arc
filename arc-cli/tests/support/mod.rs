@@ -194,6 +194,9 @@ impl InProcessRelay {
                                 Message::Ping(ping) => {
                                     let _ = tx.send(Message::Pong(ping)).await;
                                 }
+                                Message::Close(_) => {
+                                    break;
+                                }
                                 _ => {}
                             }
                         }
