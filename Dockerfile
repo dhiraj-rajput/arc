@@ -1,6 +1,9 @@
 # Multi-stage build for Rust arc-relay
 FROM rust:slim AS builder
 
+# Force update to the absolute latest stable Rust compiler
+RUN rustup update stable && rustup default stable
+
 # Install build dependencies
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
