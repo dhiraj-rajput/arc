@@ -172,6 +172,7 @@ async fn test_integration_empty_file() {
 
 #[tokio::test]
 async fn test_integration_third_member_rejected() {
+    println!("test_integration_third_member_rejected: starting...");
     let _env = TestEnv::new();
     let relay = InProcessRelay::new();
     let local_addr = relay.start("127.0.0.1:0").await;
@@ -184,6 +185,7 @@ async fn test_integration_third_member_rejected() {
     use futures_util::SinkExt;
     use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
+    println!("test_integration_third_member_rejected: connecting ws1...");
     // Join first client manually
     let (mut ws1, _) = connect_async(&ws_url).await.unwrap();
     let join_req = serde_json::json!({
@@ -195,18 +197,25 @@ async fn test_integration_third_member_rejected() {
     ws1.send(Message::Text(join_req.clone().into()))
         .await
         .unwrap();
+    println!("test_integration_third_member_rejected: ws1 joined.");
 
+    println!("test_integration_third_member_rejected: connecting ws2...");
     // Join second client manually
     let (mut ws2, _) = connect_async(&ws_url).await.unwrap();
     ws2.send(Message::Text(join_req.into())).await.unwrap();
+    println!("test_integration_third_member_rejected: ws2 joined.");
 
+    println!("test_integration_third_member_rejected: sleeping 500ms...");
     // Wait for room to be populated
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
+    println!("test_integration_third_member_rejected: running third client...");
     // Start third receiver - should be rejected immediately because the room is full
     let third = arc_core::storage::TEST_IDENTITY.scope([2u8; 32], async {
         run_pairing_receiver(phrase, &ws_url, "device-c").await
     });
     let third_res = third.await;
+    println!("test_integration_third_member_rejected: third client result: {:?}", third_res);
     assert!(third_res.is_err());
+    println!("test_integration_third_member_rejected: finished successfully!");
 }
