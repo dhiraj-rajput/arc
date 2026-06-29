@@ -127,7 +127,7 @@ pub struct WsSignal {
     pub data: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(dead_code)]
 pub enum WsRelayMessage {
@@ -147,6 +147,131 @@ pub(crate) struct HandshakePayload {
     pub(crate) signature: Option<Vec<u8>>,
 }
 
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::{Arc, Mutex};
+use tokio::net::TcpListener;
+use tokio_tungstenite::accept_async;
+
+#[derive(Clone)]
+struct Member {
+    id: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<Message>,
+}
+
+#[derive(Clone)]
+struct LocalRoom {
+    members: Vec<Member>,
+}
+
+async fn start_local_relay() -> Result<(u16, tokio::sync::oneshot::Sender<()>), anyhow::Error> {
+    let listener = TcpListener::bind("0.0.0.0:0").await?;
+    let local_port = listener.local_addr()?.port();
+    let rooms: Arc<Mutex<HashMap<String, LocalRoom>>> = Arc::new(Mutex::new(HashMap::new()));
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                conn_res = listener.accept() => {
+                    if let Ok((stream, _)) = conn_res {
+                        let rooms_clone = rooms.clone();
+                        tokio::spawn(async move {
+                            if let Ok(ws_stream) = accept_async(stream).await {
+                                let (mut ws_write, mut ws_read) = ws_stream.split();
+                                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+                                let write_task = tokio::spawn(async move {
+                                    while let Some(msg) = rx.recv().await {
+                                        if ws_write.send(msg).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                });
+
+                                let mut current_room: Option<(String, u64)> = None;
+                                while let Some(msg_res) = ws_read.next().await {
+                                    if let Ok(msg) = msg_res {
+                                        if let Message::Text(text) = msg {
+                                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                                                if let Some(msg_type) = val.get("type").and_then(|v| v.as_str()) {
+                                                    match msg_type {
+                                                        "join" => {
+                                                            if let Some(room_id) = val.get("room_id").and_then(|v| v.as_str()) {
+                                                                let room_id = room_id.to_string();
+                                                                let mut rooms_guard = rooms_clone.lock().unwrap();
+                                                                let entry = rooms_guard.entry(room_id.clone()).or_insert_with(|| LocalRoom { members: Vec::new() });
+                                                                if entry.members.len() >= 2 {
+                                                                    let err = serde_json::to_string(&WsRelayMessage::Error { message: "room full".to_string() }).unwrap();
+                                                                    let _ = tx.send(Message::Text(err.into()));
+                                                                 } else {
+                                                                    let member_id = rand::random::<u64>();
+                                                                    entry.members.push(Member { id: member_id, tx: tx.clone() });
+                                                                    let member_count = entry.members.len() as u8;
+                                                                    current_room = Some((room_id.clone(), member_id));
+
+                                                                    let joined = serde_json::to_string(&WsRelayMessage::Joined { room_id: room_id.clone(), member_count }).unwrap();
+                                                                    let _ = tx.send(Message::Text(joined.into()));
+
+                                                                    let count_msg = serde_json::to_string(&WsRelayMessage::RoomMemberCount { room_id: room_id.clone(), count: member_count }).unwrap();
+                                                                    for member in &entry.members {
+                                                                        let _ = member.tx.send(Message::Text(count_msg.clone().into()));
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        "signal" => {
+                                                            if let Some(data) = val.get("data").and_then(|v| v.as_str()) {
+                                                                let rooms_guard = rooms_clone.lock().unwrap();
+                                                                if let Some((room_id, my_id)) = &current_room {
+                                                                    if let Some(room) = rooms_guard.get(room_id) {
+                                                                        let signal = serde_json::to_string(&WsRelayMessage::Signal { data: data.to_string() }).unwrap();
+                                                                        for member in &room.members {
+                                                                            if member.id != *my_id {
+                                                                                let _ = member.tx.send(Message::Text(signal.clone().into()));
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                if let Some((room_id, my_id)) = current_room {
+                                    let mut rooms_guard = rooms_clone.lock().unwrap();
+                                    if let Some(room) = rooms_guard.get_mut(&room_id) {
+                                        room.members.retain(|m| m.id != my_id);
+                                    }
+                                    if let Some(room) = rooms_guard.get(&room_id) {
+                                        if room.members.is_empty() {
+                                            rooms_guard.remove(&room_id);
+                                        }
+                                    }
+                                }
+                                write_task.abort();
+                            }
+                        });
+                    }
+                }
+                _ = &mut shutdown_rx => {
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok((local_port, shutdown_tx))
+}
+
 // ─── Public APIs ─────────────────────────────────────────────────────────────
 
 pub async fn run_pairing_sender(
@@ -159,7 +284,42 @@ pub async fn run_pairing_sender(
 
     let (identity, config) = crate::storage::get_or_create_identity()?;
 
-    let ws_stream = crate::connect_relay(relay_url).await?;
+    let mut local_relay = None;
+    let ws_stream = match crate::connect_relay(relay_url).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to connect to public relay: {:?}. Falling back to local network pairing...",
+                e
+            );
+            println!("Public relay unreachable. Falling back to local network pairing (mDNS)...");
+
+            let (local_port, shutdown_tx) = start_local_relay().await?;
+            let daemon = ServiceDaemon::new()?;
+            let local_ips = crate::transfer::discovery::get_local_ips();
+            let ip_to_use = local_ips
+                .first()
+                .copied()
+                .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+            let service_type = "_arc-pair._tcp.local.";
+            let instance_name = room_id.clone();
+            let host_name = format!("{}.local.", instance_name);
+            let service_info = ServiceInfo::new(
+                service_type,
+                &instance_name,
+                &host_name,
+                ip_to_use,
+                local_port,
+                None,
+            )?;
+            daemon.register(service_info.clone())?;
+
+            let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
+            let stream = crate::connect_relay(&local_relay_url).await?;
+            local_relay = Some((local_port, shutdown_tx, daemon, service_info));
+            stream
+        }
+    };
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
     // Join room
@@ -255,6 +415,11 @@ pub async fn run_pairing_sender(
         crate::storage::save_config(&updated_config)?;
     }
 
+    if let Some((_, shutdown_tx, daemon, service_info)) = local_relay {
+        let _ = shutdown_tx.send(());
+        let _ = daemon.unregister(service_info.get_fullname());
+    }
+
     Ok(rx_payload.device_id)
 }
 
@@ -268,7 +433,43 @@ pub async fn run_pairing_receiver(
 
     let (identity, config) = crate::storage::get_or_create_identity()?;
 
-    let ws_stream = crate::connect_relay(relay_url).await?;
+    let ws_stream = match crate::connect_relay(relay_url).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to connect to public relay: {:?}. Falling back to local network pairing...",
+                e
+            );
+            println!(
+                "Public relay unreachable. Scanning local network for pairing partner (mDNS)..."
+            );
+
+            let daemon = ServiceDaemon::new()?;
+            let service_type = "_arc-pair._tcp.local.";
+            let receiver = daemon.browse(service_type)?;
+
+            let mut resolved_addr = None;
+            let start = std::time::Instant::now();
+            let timeout = Duration::from_secs(30);
+            while start.elapsed() < timeout {
+                if let Ok(ServiceEvent::ServiceResolved(info)) =
+                    receiver.recv_timeout(Duration::from_millis(100))
+                {
+                    if info.get_fullname().contains(&room_id) {
+                        let port = info.get_port();
+                        if let Some(ip) = info.get_addresses().iter().next() {
+                            resolved_addr = Some(SocketAddr::new(ip.to_ip_addr(), port));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            let addr = resolved_addr.ok_or_else(|| anyhow::anyhow!("Pairing partner not found on local network. Ensure both devices are on the same Wi-Fi."))?;
+            let local_relay_url = format!("ws://{}:{}/ws", addr.ip(), addr.port());
+            crate::connect_relay(&local_relay_url).await?
+        }
+    };
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
     // Join room
