@@ -48,13 +48,20 @@ Designed with a strict, proactive defense model, `arc` explicitly mitigates the 
 
 ## Installation & Setup
 
-### Prerequisites
-Make sure you have Rust (v1.85 or later) installed:
+### 1. Quick Install (Prebuilt Binaries)
+You can download and install the latest prebuilt `arc` binary directly to your computer using one of the following commands:
+
+#### On macOS & Linux (via bash/zsh):
 ```bash
-cargo --version
+curl -fsSL https://raw.githubusercontent.com/dhiraj-rajput/arc/main/install.sh | sh
 ```
 
-### Build from Source
+#### On Windows (via PowerShell):
+```powershell
+irm https://raw.githubusercontent.com/dhiraj-rajput/arc/main/install.ps1 | iex
+```
+
+### 2. Build from Source
 ```bash
 # Clone the repository
 git clone https://github.com/dhiraj-rajput/arc.git
