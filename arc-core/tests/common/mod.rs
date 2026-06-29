@@ -87,9 +87,8 @@ impl InProcessRelay {
 
                                             let (joined_msg, member_msg, senders, rejected) = {
                                                 let mut r = rooms.lock().unwrap();
-                                                let connections = r
-                                                    .entry(room_id.clone())
-                                                    .or_insert_with(Vec::new);
+                                                let connections =
+                                                    r.entry(room_id.clone()).or_default();
                                                 if connections.len() >= effective_max {
                                                     (String::new(), String::new(), Vec::new(), true)
                                                 } else {

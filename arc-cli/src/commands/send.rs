@@ -6,6 +6,7 @@ use arc_core::transfer::orchestrator::run_stdin_sender;
 use std::path::Path;
 use tokio::sync::mpsc;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn exec_send(
     path: Option<String>,
     to: Option<String>,
