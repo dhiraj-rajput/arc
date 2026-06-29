@@ -166,7 +166,8 @@ impl InProcessRelay {
                                                     "message": "Room is full"
                                                 })
                                                 .to_string();
-                                                let _ = tx.send(Message::Text(error_msg.into())).await;
+                                                let _ =
+                                                    tx.send(Message::Text(error_msg.into())).await;
                                                 break;
                                             }
                                             let _ = tx.send(Message::Text(joined_msg.into())).await;

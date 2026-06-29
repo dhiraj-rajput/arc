@@ -215,7 +215,10 @@ async fn test_integration_third_member_rejected() {
         run_pairing_receiver(phrase, &ws_url, "device-c").await
     });
     let third_res = third.await;
-    println!("test_integration_third_member_rejected: third client result: {:?}", third_res);
+    println!(
+        "test_integration_third_member_rejected: third client result: {:?}",
+        third_res
+    );
     assert!(third_res.is_err());
     println!("test_integration_third_member_rejected: finished successfully!");
 }
