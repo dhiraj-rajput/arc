@@ -1,5 +1,3 @@
-use std::process::Command;
-
 pub async fn exec_uninstall() -> anyhow::Result<()> {
     println!("🌌 Uninstalling arc...");
 
@@ -23,7 +21,7 @@ pub async fn exec_uninstall() -> anyhow::Result<()> {
     {
         let exe_str = current_exe.to_string_lossy();
         // Spawn background command to wait 1 second and then delete the exe
-        Command::new("cmd")
+        std::process::Command::new("cmd")
             .args([
                 "/c",
                 &format!("timeout /t 1 /nobreak && del /f /q \"{}\"", exe_str),
