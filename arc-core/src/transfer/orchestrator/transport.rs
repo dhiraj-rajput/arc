@@ -282,7 +282,10 @@ pub async fn run_pairing_receiver(
 
     // Wait for room to have 2 members before sending handshake (avoid race condition if sender joins late)
     let mut room_ready = false;
-    while let Some(msg_res) = ws_read.next().await {
+    while let Some(msg_res) = tokio::time::timeout(Duration::from_secs(10), ws_read.next())
+        .await
+        .map_err(|_| anyhow::anyhow!("Relay response timed out while waiting for room readiness"))?
+    {
         let msg = msg_res?;
         if let Message::Text(text) = msg {
             if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {

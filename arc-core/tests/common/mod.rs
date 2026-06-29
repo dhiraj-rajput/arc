@@ -126,7 +126,7 @@ impl InProcessRelay {
                                                 })
                                                 .to_string();
                                                 let _ = tx.send(Message::Text(err.into())).await;
-                                                continue;
+                                                break;
                                             }
 
                                             current_room = Some(room_id.clone());
