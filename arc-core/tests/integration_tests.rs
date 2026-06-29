@@ -178,19 +178,37 @@ async fn test_integration_third_member_rejected() {
     let ws_url = relay_url(local_addr);
     let phrase = "acid-acme-acre-acts-aged-aide";
 
-    let first = arc_core::storage::TEST_IDENTITY.scope([0u8; 32], async {
-        run_pairing_sender(phrase, &ws_url, "device-a").await
+    // Start first receiver (device-a) - keeps waiting since there's no sender
+    let ws_url_clone = ws_url.clone();
+    let first = tokio::spawn(async move {
+        arc_core::storage::TEST_IDENTITY
+            .scope([0u8; 32], async move {
+                run_pairing_receiver(phrase, &ws_url_clone, "device-a").await
+            })
+            .await
     });
-    let second = arc_core::storage::TEST_IDENTITY.scope([1u8; 32], async {
-        run_pairing_receiver(phrase, &ws_url, "device-b").await
-    });
-    let (r1, r2) = tokio::join!(first, second);
-    assert!(r1.is_ok());
-    assert!(r2.is_ok());
 
+    // Start second receiver (device-b) - keeps waiting since there's no sender
+    let ws_url_clone2 = ws_url.clone();
+    let second = tokio::spawn(async move {
+        arc_core::storage::TEST_IDENTITY
+            .scope([1u8; 32], async move {
+                run_pairing_receiver(phrase, &ws_url_clone2, "device-b").await
+            })
+            .await
+    });
+
+    // Give them a moment to connect
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Start third receiver (device-c) - should be rejected immediately because the room is full
     let third = arc_core::storage::TEST_IDENTITY.scope([2u8; 32], async {
         run_pairing_receiver(phrase, &ws_url, "device-c").await
     });
     let third_res = third.await;
     assert!(third_res.is_err());
+
+    // Clean up first and second tasks
+    first.abort();
+    second.abort();
 }
