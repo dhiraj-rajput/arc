@@ -18,7 +18,6 @@ tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.0", features = ["trace"] }
 tokio-tungstenite = "0.29.0"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
-rustls = { version = "0.23.41", features = ["ring"] }
 
 # Async runtime
 tokio = { version = "1.52.3", features = ["full"] }

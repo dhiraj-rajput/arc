@@ -172,7 +172,6 @@ pub enum RelayAction {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
 
     let filter = if cli.verbose {

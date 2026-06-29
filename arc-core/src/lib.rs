@@ -31,37 +31,14 @@ pub use storage::{
     wipe_config,
 };
 
-/// Connect to a WebSocket relay securely, disabling SNI to prevent host mismatch TLS errors.
+/// Connect to a WebSocket relay.
 pub async fn connect_relay(
     url_str: &str,
 ) -> Result<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     anyhow::Error,
 > {
-    use std::sync::Arc;
-    use tokio_tungstenite::{Connector, connect_async, connect_async_tls_with_config};
-    use url::Url;
-
-    let url = Url::parse(url_str)?;
-    let scheme = url.scheme();
-
-    if scheme == "wss" {
-        let mut root_store = rustls::RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-        let mut config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
-        // Disable SNI to prevent "received fatal alert: UnrecognisedName"
-        config.enable_sni = false;
-
-        let connector = Connector::Rustls(Arc::new(config));
-        let (ws_stream, _) =
-            connect_async_tls_with_config(url_str, None, false, Some(connector)).await?;
-        Ok(ws_stream)
-    } else {
-        let (ws_stream, _) = connect_async(url_str).await?;
-        Ok(ws_stream)
-    }
+    use tokio_tungstenite::connect_async;
+    let (ws_stream, _) = connect_async(url_str).await?;
+    Ok(ws_stream)
 }
