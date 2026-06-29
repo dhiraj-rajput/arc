@@ -287,7 +287,9 @@ pub async fn run_pairing_receiver(
         if let Message::Text(text) = msg {
             if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
                 match relay_msg {
-                    WsRelayMessage::Joined { member_count: 2, .. } => {
+                    WsRelayMessage::Joined {
+                        member_count: 2, ..
+                    } => {
                         room_ready = true;
                         break;
                     }
@@ -302,7 +304,9 @@ pub async fn run_pairing_receiver(
     }
 
     if !room_ready {
-        return Err(anyhow::anyhow!("Relay room connection lost before pairing partner joined"));
+        return Err(anyhow::anyhow!(
+            "Relay room connection lost before pairing partner joined"
+        ));
     }
 
     // Send handshake

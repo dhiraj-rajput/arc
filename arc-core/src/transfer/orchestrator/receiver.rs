@@ -390,7 +390,10 @@ async fn run_quic_receiver_session(
                     // Handled when TransferComplete arrives
                 }
             }
-            ArcMessage::TransferComplete { file_hash: complete_hash, .. } => {
+            ArcMessage::TransferComplete {
+                file_hash: complete_hash,
+                ..
+            } => {
                 let _ = crate::transfer::resume::ResumeState::delete_from_disk(&transfer_id);
                 let mut clipboard_content = None;
                 if let Some(ref mut f) = file {

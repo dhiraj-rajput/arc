@@ -383,9 +383,9 @@ fn test_cross_flow_pair_peers_send() {
     let receiver_env = TestEnv::new();
     receiver_env.write_minimal_config(&ws_url, "beta");
 
+    let mut rx_cmd_1 = receiver_env.arc_cmd();
     let receiver = thread::spawn(move || {
-        receiver_env
-            .arc_cmd()
+        rx_cmd_1
             .args(["pair", "--joiner", PHRASE, "--name", "beta"])
             .timeout(Duration::from_secs(120))
             .assert()
@@ -418,9 +418,9 @@ fn test_cross_flow_pair_peers_send() {
     let dest_for_receiver = dest.clone();
 
     let phrase = PHRASE;
+    let mut rx_cmd_2 = receiver_env.arc_cmd();
     let receiver = thread::spawn(move || {
-        receiver_env
-            .arc_cmd()
+        rx_cmd_2
             .args([
                 "receive",
                 phrase,

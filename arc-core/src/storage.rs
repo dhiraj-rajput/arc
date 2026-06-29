@@ -224,7 +224,7 @@ tokio::task_local! {
 
 pub fn get_or_create_identity() -> Result<(DeviceIdentity, ArcConfig), anyhow::Error> {
     let (mut identity, config) = get_or_create_identity_internal()?;
-    if let Some(secret) = TEST_IDENTITY.try_with(|s| *s).ok() {
+    if let Ok(secret) = TEST_IDENTITY.try_with(|s| *s) {
         identity = DeviceIdentity::from_secret_bytes(&secret);
     }
     Ok((identity, config))
@@ -323,7 +323,7 @@ pub fn get_db_path() -> PathBuf {
                 p
             };
         }
-        return TEST_DB_PATH.with(|p| p.clone());
+        TEST_DB_PATH.with(|p| p.clone())
     }
     #[cfg(not(test))]
     {
