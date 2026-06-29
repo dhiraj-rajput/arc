@@ -396,11 +396,15 @@ async fn run_quic_receiver_session(
             } => {
                 let _ = crate::transfer::resume::ResumeState::delete_from_disk(&transfer_id);
                 let mut clipboard_content = None;
-                if let Some(ref mut f) = file {
+                let has_file = file.is_some();
+                if let Some(mut f) = file.take() {
                     use tokio::io::AsyncWriteExt;
                     f.flush().await?;
                     f.sync_all().await?;
+                    drop(f);
+                }
 
+                if has_file {
                     if is_directory {
                         if let Some(ref tp) = temp_file_path {
                             println!("Unpacking directory to {:?}...", output_dir);
