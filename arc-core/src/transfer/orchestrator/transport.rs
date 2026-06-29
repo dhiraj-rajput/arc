@@ -28,7 +28,7 @@ where
         Ok::<(), anyhow::Error>(())
     };
 
-    tokio::time::timeout(Duration::from_secs(15), write_fut)
+    tokio::time::timeout(Duration::from_secs(60), write_fut)
         .await
         .map_err(|_| anyhow::anyhow!("Write timeout exceeded"))??;
     Ok(())
@@ -54,7 +54,7 @@ where
         Ok::<ArcMessage, anyhow::Error>(msg)
     };
 
-    let msg = tokio::time::timeout(Duration::from_secs(15), read_fut)
+    let msg = tokio::time::timeout(Duration::from_secs(60), read_fut)
         .await
         .map_err(|_| anyhow::anyhow!("Read timeout exceeded"))??;
     Ok(msg)
@@ -279,6 +279,31 @@ pub async fn run_pairing_receiver(
     };
     let join_json = serde_json::to_string(&join_req)?;
     ws_write.send(Message::Text(join_json.into())).await?;
+
+    // Wait for room to have 2 members before sending handshake (avoid race condition if sender joins late)
+    let mut room_ready = false;
+    while let Some(msg_res) = ws_read.next().await {
+        let msg = msg_res?;
+        if let Message::Text(text) = msg {
+            if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
+                match relay_msg {
+                    WsRelayMessage::Joined { member_count: 2, .. } => {
+                        room_ready = true;
+                        break;
+                    }
+                    WsRelayMessage::RoomMemberCount { count: 2, .. } => {
+                        room_ready = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if !room_ready {
+        return Err(anyhow::anyhow!("Relay room connection lost before pairing partner joined"));
+    }
 
     // Send handshake
     let our_nonce: [u8; 32] = rand::random();

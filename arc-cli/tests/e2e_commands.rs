@@ -383,33 +383,26 @@ fn test_cross_flow_pair_peers_send() {
     let receiver_env = TestEnv::new();
     receiver_env.write_minimal_config(&ws_url, "beta");
 
-    rt.block_on(async {
-        unsafe {
-            std::env::set_var(
-                arc_core::storage::ENV_CONFIG_DIR,
-                sender_env.config_dir.path(),
-            );
-        }
-        arc_core::storage::TEST_IDENTITY
-            .scope([20u8; 32], async {
-                arc_core::transfer::orchestrator::run_pairing_sender(PHRASE, &ws_url, "alpha").await
-            })
-            .await
-            .unwrap();
-        unsafe {
-            std::env::set_var(
-                arc_core::storage::ENV_CONFIG_DIR,
-                receiver_env.config_dir.path(),
-            );
-        }
-        arc_core::storage::TEST_IDENTITY
-            .scope([21u8; 32], async {
-                arc_core::transfer::orchestrator::run_pairing_receiver(PHRASE, &ws_url, "beta")
-                    .await
-            })
-            .await
-            .unwrap();
+    let receiver = thread::spawn(move || {
+        receiver_env
+            .arc_cmd()
+            .args(["pair", "--joiner", PHRASE, "--name", "beta"])
+            .timeout(Duration::from_secs(120))
+            .assert()
+            .success();
     });
+
+    thread::sleep(Duration::from_millis(500));
+
+    sender_env
+        .arc_cmd()
+        .args(["pair", "--initiator", "--code", PHRASE, "--name", "alpha"])
+        .env("ARC_RELAY_URL", &ws_url)
+        .timeout(Duration::from_secs(120))
+        .assert()
+        .success();
+
+    receiver.join().unwrap();
 
     sender_env
         .arc_cmd()
@@ -467,25 +460,28 @@ fn test_peers_revoke_blocks_send() {
 
     let env = TestEnv::new();
     env.write_minimal_config(&ws_url, "solo");
+    let peer_env = TestEnv::new();
+    peer_env.write_minimal_config(&ws_url, "peer-x");
 
-    rt.block_on(async {
-        unsafe {
-            std::env::set_var(arc_core::storage::ENV_CONFIG_DIR, env.config_dir.path());
-        }
-        arc_core::storage::TEST_IDENTITY
-            .scope([30u8; 32], async {
-                arc_core::transfer::orchestrator::run_pairing_sender(PHRASE, &ws_url, "solo").await
-            })
-            .await
-            .unwrap();
-        arc_core::storage::TEST_IDENTITY
-            .scope([31u8; 32], async {
-                arc_core::transfer::orchestrator::run_pairing_receiver(PHRASE, &ws_url, "peer-x")
-                    .await
-            })
-            .await
-            .unwrap();
+    let receiver = thread::spawn(move || {
+        peer_env
+            .arc_cmd()
+            .args(["pair", "--joiner", PHRASE, "--name", "peer-x"])
+            .timeout(Duration::from_secs(120))
+            .assert()
+            .success();
     });
+
+    thread::sleep(Duration::from_millis(500));
+
+    env.arc_cmd()
+        .args(["pair", "--initiator", "--code", PHRASE, "--name", "solo"])
+        .env("ARC_RELAY_URL", &ws_url)
+        .timeout(Duration::from_secs(120))
+        .assert()
+        .success();
+
+    receiver.join().unwrap();
 
     env.arc_cmd()
         .args(["peers", "revoke", "peer-x"])
