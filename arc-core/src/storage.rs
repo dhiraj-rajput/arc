@@ -223,6 +223,7 @@ tokio::task_local! {
 }
 
 pub fn get_or_create_identity() -> Result<(DeviceIdentity, ArcConfig), anyhow::Error> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let (mut identity, config) = get_or_create_identity_internal()?;
     if let Ok(secret) = TEST_IDENTITY.try_with(|s| *s) {
         identity = DeviceIdentity::from_secret_bytes(&secret);
