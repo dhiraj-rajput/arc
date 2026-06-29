@@ -299,26 +299,40 @@ fn test_send_receive_file_e2e() {
     let phrase = PHRASE;
     let dest = dest_dir.clone();
 
-    let receiver = thread::spawn(move || {
-        receiver_env
-            .arc_cmd()
+    let mut rx_cmd = receiver_env.arc_cmd();
+    let receiver_handle = thread::spawn(move || {
+        rx_cmd
             .args(["receive", phrase, "--dir", dest.to_str().unwrap()])
             .timeout(Duration::from_secs(120))
-            .assert()
-            .success();
+            .output()
     });
 
     thread::sleep(Duration::from_millis(500));
 
-    sender_env
+    let sender_res = sender_env
         .arc_cmd()
         .args(["send", src.to_str().unwrap(), "--code", phrase])
         .env("ARC_RELAY_URL", &ws_url)
         .timeout(Duration::from_secs(120))
-        .assert()
-        .success();
+        .output();
 
-    receiver.join().unwrap();
+    let receiver_res = receiver_handle.join().unwrap();
+
+    let sender_output = sender_res.unwrap();
+    let receiver_output = receiver_res.unwrap();
+
+    println!("--- SENDER STDOUT ---");
+    println!("{}", String::from_utf8_lossy(&sender_output.stdout));
+    println!("--- SENDER STDERR ---");
+    println!("{}", String::from_utf8_lossy(&sender_output.stderr));
+
+    println!("--- RECEIVER STDOUT ---");
+    println!("{}", String::from_utf8_lossy(&receiver_output.stdout));
+    println!("--- RECEIVER STDERR ---");
+    println!("{}", String::from_utf8_lossy(&receiver_output.stderr));
+
+    assert!(sender_output.status.success(), "sender failed");
+    assert!(receiver_output.status.success(), "receiver failed");
 
     let received = dest_dir.join("outbox.dat");
     assert!(received.exists());
@@ -339,28 +353,44 @@ fn test_send_stdin_receive_stdout() {
 
     let phrase = PHRASE;
 
-    let receiver = thread::spawn(move || {
-        receiver_env
-            .arc_cmd()
+    let mut rx_cmd = receiver_env.arc_cmd();
+    let receiver_handle = thread::spawn(move || {
+        rx_cmd
             .args(["receive", phrase, "--stdout"])
             .timeout(Duration::from_secs(120))
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("pipe-payload"));
+            .output()
     });
 
     thread::sleep(Duration::from_millis(500));
 
-    sender_env
+    let sender_res = sender_env
         .arc_cmd()
         .args(["send", "--stdin", "--name", "pipe.txt", "--code", phrase])
         .env("ARC_RELAY_URL", &ws_url)
         .write_stdin(b"pipe-payload")
         .timeout(Duration::from_secs(120))
-        .assert()
-        .success();
+        .output();
 
-    receiver.join().unwrap();
+    let receiver_res = receiver_handle.join().unwrap();
+
+    let sender_output = sender_res.unwrap();
+    let receiver_output = receiver_res.unwrap();
+
+    println!("--- SENDER STDOUT ---");
+    println!("{}", String::from_utf8_lossy(&sender_output.stdout));
+    println!("--- SENDER STDERR ---");
+    println!("{}", String::from_utf8_lossy(&sender_output.stderr));
+
+    println!("--- RECEIVER STDOUT ---");
+    println!("{}", String::from_utf8_lossy(&receiver_output.stdout));
+    println!("--- RECEIVER STDERR ---");
+    println!("{}", String::from_utf8_lossy(&receiver_output.stderr));
+
+    assert!(sender_output.status.success(), "sender failed");
+    assert!(receiver_output.status.success(), "receiver failed");
+
+    let stdout_str = String::from_utf8_lossy(&receiver_output.stdout);
+    assert!(stdout_str.contains("pipe-payload"));
 }
 
 #[test]

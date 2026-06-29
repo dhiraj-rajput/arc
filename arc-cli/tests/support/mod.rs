@@ -212,6 +212,13 @@ impl InProcessRelay {
                                 _ => {}
                             }
                         }
+                        {
+                            let mut r = rooms.lock().unwrap();
+                            for connections in r.values_mut() {
+                                connections.retain(|c| c.id != client_id);
+                            }
+                            r.retain(|_, v| !v.is_empty());
+                        }
                         ws_writer_task.abort();
                     }
                 });
