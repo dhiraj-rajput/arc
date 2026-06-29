@@ -1,7 +1,7 @@
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::tungstenite::protocol::Message;
 
 use crate::clipboard::{
     ClipboardContent, ClipboardEvent, ClipboardWatcher, apply_remote_clipboard,
@@ -35,7 +35,7 @@ pub async fn exec_clipboard_sync(
     let room_id = hex::encode(blake3::hash(&phrase_seed).as_bytes());
 
     println!("Connecting to relay for clipboard synchronization...");
-    let (ws_stream, _) = connect_async(relay_url).await?;
+    let ws_stream = arc_core::connect_relay(relay_url).await?;
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
     // Join room

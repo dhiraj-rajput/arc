@@ -20,16 +20,16 @@ pub async fn exec_uninstall() -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
         let mut exe_str = current_exe.to_string_lossy().to_string();
-        // cmd.exe's "del" command does not support UNC paths starting with \\?\
         if exe_str.starts_with(r"\\?\") {
             exe_str = exe_str[4..].to_string();
         }
 
-        // Spawn background command to wait 1 second using ping (which is silent) and then delete the exe
-        std::process::Command::new("cmd")
+        // Spawn a background PowerShell command to wait 1 second and force-delete the exe.
+        // PowerShell handles arguments cleanly without cmd's nested-quote stripping issues.
+        std::process::Command::new("powershell")
             .args([
-                "/c",
-                &format!("ping 127.0.0.1 -n 2 > nul && del /f /q \"{}\"", exe_str),
+                "-Command",
+                &format!("Start-Sleep -Seconds 1; Remove-Item -Force '{}'", exe_str),
             ])
             .spawn()?;
         println!("✨ arc has been uninstalled successfully!");

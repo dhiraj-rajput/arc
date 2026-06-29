@@ -6,7 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::tungstenite::protocol::Message;
 
 use crate::crypto::identity::DeviceId;
 use crate::protocol::messages::ArcMessage;
@@ -159,7 +159,7 @@ pub async fn run_pairing_sender(
 
     let (identity, config) = crate::storage::get_or_create_identity()?;
 
-    let (ws_stream, _) = connect_async(relay_url).await?;
+    let ws_stream = crate::connect_relay(relay_url).await?;
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
     // Join room
@@ -268,7 +268,7 @@ pub async fn run_pairing_receiver(
 
     let (identity, config) = crate::storage::get_or_create_identity()?;
 
-    let (ws_stream, _) = connect_async(relay_url).await?;
+    let ws_stream = crate::connect_relay(relay_url).await?;
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
     // Join room
@@ -404,7 +404,7 @@ pub async fn run_pairing_receiver(
 
 pub async fn check_relay_status(relay_url: &str) -> Result<Duration, anyhow::Error> {
     let start = Instant::now();
-    let (ws_stream, _) = connect_async(relay_url).await?;
+    let ws_stream = crate::connect_relay(relay_url).await?;
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
     ws_write.send(Message::Ping(vec![].into())).await?;

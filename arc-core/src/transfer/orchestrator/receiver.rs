@@ -4,7 +4,7 @@ use std::path::Path;
 use futures_util::{SinkExt, StreamExt};
 use serde_json;
 use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::tungstenite::protocol::Message;
 
 use crate::compression::decompress_with_limit;
 use crate::crypto::cipher::{CipherSuite, Direction, build_nonce, decrypt_chunk};
@@ -496,7 +496,7 @@ pub async fn run_receiver(
     let our_node_addr = endpoint.addr();
 
     println!("Connecting to relay at {}...", relay_url);
-    let (ws_stream, _) = connect_async(relay_url).await?;
+    let ws_stream = crate::connect_relay(relay_url).await?;
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
     // Join room
