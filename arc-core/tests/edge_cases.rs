@@ -66,8 +66,10 @@ async fn test_directory_transfer() {
     s.unwrap();
     r.unwrap();
 
-    assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"aaa");
-    assert_eq!(fs::read(dest.join("sub/b.txt")).unwrap(), b"bbb");
+    let dir_name = src_dir.path().file_name().unwrap().to_str().unwrap();
+    let unpacked_dir = dest.join(dir_name);
+    assert_eq!(fs::read(unpacked_dir.join("a.txt")).unwrap(), b"aaa");
+    assert_eq!(fs::read(unpacked_dir.join("sub/b.txt")).unwrap(), b"bbb");
 }
 
 #[tokio::test]
