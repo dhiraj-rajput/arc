@@ -6,7 +6,7 @@ $assetName = "arc-windows-amd64.zip"
 $url = "https://github.com/$repo/releases/latest/download/$assetName"
 
 $installDir = Join-Path $HOME "AppData\Local\arc\bin"
-$zipPath = Join-Path [System.IO.Path]::GetTempPath() "arc.zip"
+$zipPath = Join-Path $env:TEMP "arc.zip"
 
 Write-Host "🌌 Installing arc on Windows..." -ForegroundColor Cyan
 

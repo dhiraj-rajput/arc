@@ -139,6 +139,9 @@ enum Commands {
 
     /// EMERGENCY: Wipe all pairing keys and generate a new device identity.
     Panic,
+
+    /// Completely uninstall arc, removing configuration directories and the binary.
+    Uninstall,
 }
 
 #[derive(Subcommand)]
@@ -246,6 +249,9 @@ async fn main() -> anyhow::Result<()> {
                     println!(
                         "Wiped configurations and keys. Run again to generate a new identity."
                     );
+                }
+                Commands::Uninstall => {
+                    commands::uninstall::exec_uninstall().await?;
                 }
             }
         } else {

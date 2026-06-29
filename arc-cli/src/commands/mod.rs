@@ -7,4 +7,5 @@ pub mod ping;
 pub mod receive;
 pub mod relay;
 pub mod send;
+pub mod uninstall;
 pub mod verify;
