@@ -178,37 +178,35 @@ async fn test_integration_third_member_rejected() {
     let ws_url = relay_url(local_addr);
     let phrase = "acid-acme-acre-acts-aged-aide";
 
-    // Start first receiver (device-a) - keeps waiting since there's no sender
-    let ws_url_clone = ws_url.clone();
-    let first = tokio::spawn(async move {
-        arc_core::storage::TEST_IDENTITY
-            .scope([0u8; 32], async move {
-                run_pairing_receiver(phrase, &ws_url_clone, "device-a").await
-            })
-            .await
-    });
+    let phrase_seed = arc_core::crypto::derive_key_from_phrase(phrase);
+    let room_id = hex::encode(blake3::hash(&phrase_seed).as_bytes());
 
-    // Start second receiver (device-b) - keeps waiting since there's no sender
-    let ws_url_clone2 = ws_url.clone();
-    let second = tokio::spawn(async move {
-        arc_core::storage::TEST_IDENTITY
-            .scope([1u8; 32], async move {
-                run_pairing_receiver(phrase, &ws_url_clone2, "device-b").await
-            })
-            .await
-    });
+    use futures_util::SinkExt;
+    use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
-    // Give them a moment to connect
+    // Join first client manually
+    let (mut ws1, _) = connect_async(&ws_url).await.unwrap();
+    let join_req = serde_json::json!({
+        "type": "join",
+        "room_id": room_id,
+        "max_members": 2
+    })
+    .to_string();
+    ws1.send(Message::Text(join_req.clone().into()))
+        .await
+        .unwrap();
+
+    // Join second client manually
+    let (mut ws2, _) = connect_async(&ws_url).await.unwrap();
+    ws2.send(Message::Text(join_req.into())).await.unwrap();
+
+    // Wait for room to be populated
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Start third receiver (device-c) - should be rejected immediately because the room is full
+    // Start third receiver - should be rejected immediately because the room is full
     let third = arc_core::storage::TEST_IDENTITY.scope([2u8; 32], async {
         run_pairing_receiver(phrase, &ws_url, "device-c").await
     });
     let third_res = third.await;
     assert!(third_res.is_err());
-
-    // Clean up first and second tasks
-    first.abort();
-    second.abort();
 }
