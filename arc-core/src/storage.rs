@@ -1,9 +1,9 @@
 //! Local storage for device identity and paired peers configuration.
 
+use crate::crypto::identity::DeviceIdentity;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use crate::crypto::identity::DeviceIdentity;
-use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PeerInfo {
@@ -96,7 +96,7 @@ pub fn load_config() -> Result<ArcConfig, anyhow::Error> {
     let path = get_config_path();
     let content = fs::read_to_string(&path)?;
     let mut config: ArcConfig = serde_json::from_str(&content)?;
-    
+
     // Load peers from SQLite
     if let Ok(conn) = get_db_conn() {
         let mut stmt = conn.prepare("SELECT device_id, name FROM peers")?;
@@ -109,23 +109,25 @@ pub fn load_config() -> Result<ArcConfig, anyhow::Error> {
                 device_id,
             })
         })?;
-        
+
         let mut peers = Vec::new();
         for peer in peer_iter {
             peers.push(peer?);
         }
         config.peers = peers;
     }
-    
+
     Ok(config)
 }
 
 /// Save configuration to disk. Enforces secure 0o600 permissions on Unix.
 pub fn save_config(config: &ArcConfig) -> Result<(), anyhow::Error> {
     let path = get_config_path();
-    let parent = path.parent().ok_or_else(|| anyhow::anyhow!("no parent directory for config path"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("no parent directory for config path"))?;
     fs::create_dir_all(parent)?;
-    
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -135,10 +137,10 @@ pub fn save_config(config: &ArcConfig) -> Result<(), anyhow::Error> {
     }
 
     let content = serde_json::to_string_pretty(config)?;
-    
+
     // Create a temp file in the same directory to guarantee atomic rename is on same filesystem device
     let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -150,7 +152,7 @@ pub fn save_config(config: &ArcConfig) -> Result<(), anyhow::Error> {
     use std::io::Write;
     temp.write_all(content.as_bytes())?;
     temp.as_file().sync_all()?;
-    
+
     // Atomically persist to target path
     temp.persist(&path)?;
 
@@ -161,7 +163,9 @@ pub fn save_config(config: &ArcConfig) -> Result<(), anyhow::Error> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-        let mut stmt = conn.prepare("INSERT OR REPLACE INTO peers (device_id, name, paired_at) VALUES (?, ?, ?)")?;
+        let mut stmt = conn.prepare(
+            "INSERT OR REPLACE INTO peers (device_id, name, paired_at) VALUES (?, ?, ?)",
+        )?;
         for peer in &config.peers {
             stmt.execute(rusqlite::params![&peer.device_id.to_vec(), &peer.name, now])?;
         }
@@ -183,11 +187,18 @@ pub fn save_config(config: &ArcConfig) -> Result<(), anyhow::Error> {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to execute icacls command to restrict file permissions on {:?}: {:?}", path, e);
+                    tracing::warn!(
+                        "Failed to execute icacls command to restrict file permissions on {:?}: {:?}",
+                        path,
+                        e
+                    );
                 }
             }
         } else {
-            tracing::warn!("USERNAME environment variable not set; skipping icacls configuration on {:?}", path);
+            tracing::warn!(
+                "USERNAME environment variable not set; skipping icacls configuration on {:?}",
+                path
+            );
         }
     }
     Ok(())
@@ -233,26 +244,24 @@ fn get_or_create_identity_internal() -> Result<(DeviceIdentity, ArcConfig), anyh
                 }
                 s
             }
-            None => {
-                match config.identity_secret {
-                    Some(s) => {
-                        if crate::keystore::set_identity_secret(&s).is_ok() {
-                            config.identity_secret = None;
-                            save_config(&config)?;
-                        }
-                        s
-                    }
-                    None => {
-                        let identity = DeviceIdentity::generate();
-                        let s = identity.secret_bytes();
-                        if crate::keystore::set_identity_secret(&s).is_err() {
-                            config.identity_secret = Some(s);
-                        }
+            None => match config.identity_secret {
+                Some(s) => {
+                    if crate::keystore::set_identity_secret(&s).is_ok() {
+                        config.identity_secret = None;
                         save_config(&config)?;
-                        s
                     }
+                    s
                 }
-            }
+                None => {
+                    let identity = DeviceIdentity::generate();
+                    let s = identity.secret_bytes();
+                    if crate::keystore::set_identity_secret(&s).is_err() {
+                        config.identity_secret = Some(s);
+                    }
+                    save_config(&config)?;
+                    s
+                }
+            },
         };
 
         let identity = DeviceIdentity::from_secret_bytes(&secret);
@@ -399,7 +408,7 @@ pub fn get_transfer_history() -> Result<Vec<TransferHistoryEntry>, anyhow::Error
         let tid_bytes: Vec<u8> = row.get(0)?;
         let mut transfer_id = [0u8; 16];
         transfer_id.copy_from_slice(&tid_bytes);
-        
+
         let pid_bytes: Vec<u8> = row.get(4)?;
         let mut peer_device_id = [0u8; 32];
         peer_device_id.copy_from_slice(&pid_bytes);
@@ -430,12 +439,12 @@ mod tests {
     #[test]
     fn test_sqlite_db_init_and_peers() {
         let _conn = get_db_conn().expect("failed to connect to test db");
-        
+
         let peer = PeerInfo {
             name: "test_device".to_string(),
             device_id: [0x55; 32],
         };
-        
+
         let config = ArcConfig {
             device_name: "test_host".to_string(),
             identity_secret: None,
@@ -448,7 +457,7 @@ mod tests {
         };
 
         save_config(&config).expect("failed to save config");
-        
+
         let loaded = load_config().expect("failed to load config");
         assert_eq!(loaded.peers.len(), 1);
         assert_eq!(loaded.peers[0].name, "test_device");
@@ -501,7 +510,7 @@ mod tests {
         };
 
         add_transfer_history(&entry).expect("failed to add transfer history");
-        
+
         let history = get_transfer_history().expect("failed to get history");
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].transfer_id, [0xAA; 16]);

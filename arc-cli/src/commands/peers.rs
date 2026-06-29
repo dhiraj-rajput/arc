@@ -1,6 +1,6 @@
+use crate::PeersCommands;
 use arc_core::get_identity_with_merged_config;
 use arc_core::storage::save_config;
-use crate::PeersCommands;
 
 pub async fn exec_peers(cmd: PeersCommands) -> anyhow::Result<()> {
     let (_, mut config) = get_identity_with_merged_config()?;

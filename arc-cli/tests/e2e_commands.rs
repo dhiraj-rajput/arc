@@ -29,11 +29,7 @@ fn test_help_and_version() {
         .success()
         .stdout(predicate::str::contains("Secure, parallel P2P"));
 
-    TestEnv::new()
-        .arc_cmd()
-        .arg("--version")
-        .assert()
-        .success();
+    TestEnv::new().arc_cmd().arg("--version").assert().success();
 }
 
 #[test]
@@ -204,7 +200,6 @@ fn test_verify_missing_path() {
         .failure();
 }
 
-
 #[test]
 fn test_pair_cli_with_fixed_code() {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -301,13 +296,13 @@ fn test_send_receive_file_e2e() {
     let dest_dir = receiver_env.config_dir.path().join("inbox");
     fs::create_dir_all(&dest_dir).unwrap();
 
-    let phrase = PHRASE.to_string();
+    let phrase = PHRASE;
     let dest = dest_dir.clone();
 
     let receiver = thread::spawn(move || {
         receiver_env
             .arc_cmd()
-            .args(["receive", &phrase, "--dir", dest.to_str().unwrap()])
+            .args(["receive", phrase, "--dir", dest.to_str().unwrap()])
             .timeout(Duration::from_secs(120))
             .assert()
             .success();
@@ -317,7 +312,7 @@ fn test_send_receive_file_e2e() {
 
     sender_env
         .arc_cmd()
-        .args(["send", src.to_str().unwrap()])
+        .args(["send", src.to_str().unwrap(), "--code", phrase])
         .env("ARC_RELAY_URL", &ws_url)
         .timeout(Duration::from_secs(120))
         .assert()
@@ -342,12 +337,12 @@ fn test_send_stdin_receive_stdout() {
     let receiver_env = TestEnv::new();
     receiver_env.write_minimal_config(&ws_url, "stdout-receiver");
 
-    let phrase = PHRASE.to_string();
+    let phrase = PHRASE;
 
     let receiver = thread::spawn(move || {
         receiver_env
             .arc_cmd()
-            .args(["receive", &phrase, "--stdout"])
+            .args(["receive", phrase, "--stdout"])
             .timeout(Duration::from_secs(120))
             .assert()
             .success()
@@ -358,7 +353,7 @@ fn test_send_stdin_receive_stdout() {
 
     sender_env
         .arc_cmd()
-        .args(["send", "--stdin", "--name", "pipe.txt"])
+        .args(["send", "--stdin", "--name", "pipe.txt", "--code", phrase])
         .env("ARC_RELAY_URL", &ws_url)
         .write_stdin(b"pipe-payload")
         .timeout(Duration::from_secs(120))
@@ -409,7 +404,8 @@ fn test_cross_flow_pair_peers_send() {
         }
         arc_core::storage::TEST_IDENTITY
             .scope([21u8; 32], async {
-                arc_core::transfer::orchestrator::run_pairing_receiver(PHRASE, &ws_url, "beta").await
+                arc_core::transfer::orchestrator::run_pairing_receiver(PHRASE, &ws_url, "beta")
+                    .await
             })
             .await
             .unwrap();
@@ -428,11 +424,16 @@ fn test_cross_flow_pair_peers_send() {
     fs::create_dir_all(&dest).unwrap();
     let dest_for_receiver = dest.clone();
 
-    let phrase = PHRASE.to_string();
+    let phrase = PHRASE;
     let receiver = thread::spawn(move || {
         receiver_env
             .arc_cmd()
-            .args(["receive", &phrase, "--dir", dest_for_receiver.to_str().unwrap()])
+            .args([
+                "receive",
+                phrase,
+                "--dir",
+                dest_for_receiver.to_str().unwrap(),
+            ])
             .timeout(Duration::from_secs(120))
             .assert()
             .success();
@@ -441,7 +442,14 @@ fn test_cross_flow_pair_peers_send() {
 
     sender_env
         .arc_cmd()
-        .args(["send", src.to_str().unwrap(), "--to", "beta"])
+        .args([
+            "send",
+            src.to_str().unwrap(),
+            "--to",
+            "beta",
+            "--code",
+            phrase,
+        ])
         .timeout(Duration::from_secs(120))
         .assert()
         .success();
@@ -462,10 +470,7 @@ fn test_peers_revoke_blocks_send() {
 
     rt.block_on(async {
         unsafe {
-            std::env::set_var(
-                arc_core::storage::ENV_CONFIG_DIR,
-                env.config_dir.path(),
-            );
+            std::env::set_var(arc_core::storage::ENV_CONFIG_DIR, env.config_dir.path());
         }
         arc_core::storage::TEST_IDENTITY
             .scope([30u8; 32], async {

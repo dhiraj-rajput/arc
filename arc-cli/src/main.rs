@@ -59,6 +59,9 @@ enum Commands {
         /// Send from the system clipboard.
         #[arg(long)]
         clipboard: bool,
+        /// Use a specific transfer code (for scripting and tests).
+        #[arg(long)]
+        code: Option<String>,
     },
 
     /// Receive files from a paired device.
@@ -78,15 +81,15 @@ enum Commands {
         /// Device name to display during pairing.
         #[arg(long)]
         name: Option<String>,
-    /// Initiate pairing non-interactively.
-    #[arg(long)]
-    initiator: bool,
-    /// Use a specific pairing code (initiator only; for scripting and tests).
-    #[arg(long)]
-    code: Option<String>,
-    /// Join pairing non-interactively with the given codephrase.
-    #[arg(long)]
-    joiner: Option<String>,
+        /// Initiate pairing non-interactively.
+        #[arg(long)]
+        initiator: bool,
+        /// Use a specific pairing code (initiator only; for scripting and tests).
+        #[arg(long)]
+        code: Option<String>,
+        /// Join pairing non-interactively with the given codephrase.
+        #[arg(long)]
+        joiner: Option<String>,
     },
 
     /// Manage paired devices.
@@ -196,11 +199,18 @@ async fn main() -> anyhow::Result<()> {
                     stdin,
                     name,
                     clipboard,
+                    code,
                 } => {
-                    commands::send::exec_send(path, to, share, stdin, name, clipboard, cli.relay)
-                        .await?;
+                    commands::send::exec_send(
+                        path, to, share, stdin, name, clipboard, code, cli.relay,
+                    )
+                    .await?;
                 }
-                Commands::Receive { phrase, dir, stdout } => {
+                Commands::Receive {
+                    phrase,
+                    dir,
+                    stdout,
+                } => {
                     commands::receive::exec_receive(phrase, dir, stdout, cli.relay).await?;
                 }
                 Commands::Pair {
@@ -233,7 +243,9 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Commands::Panic => {
                     wipe_config()?;
-                    println!("Wiped configurations and keys. Run again to generate a new identity.");
+                    println!(
+                        "Wiped configurations and keys. Run again to generate a new identity."
+                    );
                 }
             }
         } else {
@@ -255,7 +267,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_interactive_menu() -> anyhow::Result<()> {
-    use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
+    use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 
     let theme = ColorfulTheme::default();
 
@@ -288,16 +300,8 @@ async fn run_interactive_menu() -> anyhow::Result<()> {
                 let path: String = Input::with_theme(&theme)
                     .with_prompt("Path to the file or directory to send")
                     .interact_text()?;
-                commands::send::exec_send(
-                    Some(path),
-                    None,
-                    false,
-                    false,
-                    None,
-                    false,
-                    None,
-                )
-                .await?;
+                commands::send::exec_send(Some(path), None, false, false, None, false, None, None)
+                    .await?;
             }
             1 => {
                 let phrase: String = Input::with_theme(&theme)

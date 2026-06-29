@@ -86,7 +86,6 @@ pub enum DeltaOp {
 #[derive(Debug, Clone, Encode, Decode)]
 pub enum ArcMessage {
     // ─── Handshake ───────────────────────────────────────────────────────────
-
     /// Session initiation. First message sent on a new connection.
     Hello {
         /// Wire format version. Current: 1.
@@ -109,7 +108,6 @@ pub enum ArcMessage {
     },
 
     // ─── Authentication ──────────────────────────────────────────────────────
-
     /// Challenge sent after HelloAck. Peer must sign this with their Ed25519 key.
     AuthChallenge {
         /// 32 random bytes the peer must sign.
@@ -126,12 +124,9 @@ pub enum ArcMessage {
     AuthOk,
 
     /// Authentication failed.
-    AuthFail {
-        reason: AuthFailReason,
-    },
+    AuthFail { reason: AuthFailReason },
 
     // ─── Transfer Negotiation ────────────────────────────────────────────────
-
     /// Offer to send a file or directory.
     TransferOffer {
         transfer_id: [u8; 16], // UUID bytes
@@ -166,7 +161,6 @@ pub enum ArcMessage {
     },
 
     // ─── Data Transfer ───────────────────────────────────────────────────────
-
     /// A single encrypted chunk of file data.
     ///
     /// `data` is the ChaCha20-Poly1305 (or AES-GCM) ciphertext.
@@ -184,10 +178,7 @@ pub enum ArcMessage {
     },
 
     /// Receiver acknowledges a chunk.
-    ChunkAck {
-        transfer_id: [u8; 16],
-        index: u32,
-    },
+    ChunkAck { transfer_id: [u8; 16], index: u32 },
 
     /// Receiver rejects a chunk (hash mismatch or decrypt failure).
     /// Sender should retransmit the chunk.
@@ -199,7 +190,6 @@ pub enum ArcMessage {
     },
 
     // ─── Delta Transfer (v2) ──────────────────────────────────────────────────
-
     /// Sent by receiver to request only differences for an existing file.
     DeltaBlockList {
         transfer_id: [u8; 16],
@@ -213,7 +203,6 @@ pub enum ArcMessage {
     },
 
     // ─── Transfer Completion ─────────────────────────────────────────────────
-
     /// All chunks have been sent. Receiver should verify the BLAKE3 root.
     TransferComplete {
         transfer_id: [u8; 16],
@@ -232,16 +221,12 @@ pub enum ArcMessage {
     },
 
     // ─── Relay Signaling ─────────────────────────────────────────────────────
-
     /// Relay → client: current member count in the room.
     ///
     /// INV-9: If count > 2, abort immediately (relay MITM detected).
-    RoomMemberCount {
-        count: u8,
-    },
+    RoomMemberCount { count: u8 },
 
     // ─── File Metadata ───────────────────────────────────────────────────────
-
     /// Extended file metadata (sent after TransferAccept, before first Chunk).
     FileMetadata {
         transfer_id: [u8; 16],
@@ -256,7 +241,6 @@ pub enum ArcMessage {
     },
 
     // ─── Keep-Alive ──────────────────────────────────────────────────────────
-
     /// Keep-alive ping. Must be responded to with Pong within 15 seconds.
     Ping {
         /// Monotonic timestamp from sender (milliseconds).
@@ -270,7 +254,6 @@ pub enum ArcMessage {
     },
 
     // ─── Session Control ─────────────────────────────────────────────────────
-
     /// Graceful session termination.
     Goodbye {
         /// Human-readable reason (for logging).
@@ -284,7 +267,10 @@ pub const CONTROL_PADDED_SIZE: usize = 512;
 /// The last 2 bytes store the total padding length as a u16 LE.
 pub fn pad_control_message(msg: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
     if msg.len() > CONTROL_PADDED_SIZE - 2 {
-        return Err(anyhow::anyhow!("Control message too large for padding: {} bytes", msg.len()));
+        return Err(anyhow::anyhow!(
+            "Control message too large for padding: {} bytes",
+            msg.len()
+        ));
     }
     let mut padded = msg.to_vec();
     let pad_len = CONTROL_PADDED_SIZE - msg.len();
@@ -302,12 +288,19 @@ pub fn pad_control_message(msg: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
 /// Strip the fixed padding from a 512-byte control message.
 pub fn strip_control_padding(padded: &[u8]) -> Result<&[u8], anyhow::Error> {
     if padded.len() != CONTROL_PADDED_SIZE {
-        return Err(anyhow::anyhow!("Invalid padded control message size: {} bytes (expected {})", padded.len(), CONTROL_PADDED_SIZE));
+        return Err(anyhow::anyhow!(
+            "Invalid padded control message size: {} bytes (expected {})",
+            padded.len(),
+            CONTROL_PADDED_SIZE
+        ));
     }
     let pad_len_bytes = &padded[CONTROL_PADDED_SIZE - 2..];
     let pad_len = u16::from_le_bytes(pad_len_bytes.try_into().unwrap()) as usize;
     if !(2..=CONTROL_PADDED_SIZE).contains(&pad_len) {
-        return Err(anyhow::anyhow!("Invalid control message padding length: {}", pad_len));
+        return Err(anyhow::anyhow!(
+            "Invalid control message padding length: {}",
+            pad_len
+        ));
     }
     Ok(&padded[..CONTROL_PADDED_SIZE - pad_len])
 }
@@ -372,7 +365,13 @@ mod tests {
             capabilities: vec![],
         };
         let back = roundtrip(msg);
-        assert!(matches!(back, ArcMessage::Hello { protocol_version: 1, .. }));
+        assert!(matches!(
+            back,
+            ArcMessage::Hello {
+                protocol_version: 1,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -415,7 +414,11 @@ mod tests {
         };
         let back = roundtrip(msg);
         match back {
-            ArcMessage::TransferOffer { file_name, total_size, .. } => {
+            ArcMessage::TransferOffer {
+                file_name,
+                total_size,
+                ..
+            } => {
                 assert_eq!(file_name, "photo.jpg");
                 assert_eq!(total_size, 1024 * 1024);
             }
@@ -425,17 +428,33 @@ mod tests {
 
     #[test]
     fn test_ping_pong_roundtrip() {
-        let ping = roundtrip(ArcMessage::Ping { timestamp_ms: 123456 });
-        assert!(matches!(ping, ArcMessage::Ping { timestamp_ms: 123456 }));
+        let ping = roundtrip(ArcMessage::Ping {
+            timestamp_ms: 123456,
+        });
+        assert!(matches!(
+            ping,
+            ArcMessage::Ping {
+                timestamp_ms: 123456
+            }
+        ));
 
-        let pong = roundtrip(ArcMessage::Pong { timestamp_ms: 123456 });
-        assert!(matches!(pong, ArcMessage::Pong { timestamp_ms: 123456 }));
+        let pong = roundtrip(ArcMessage::Pong {
+            timestamp_ms: 123456,
+        });
+        assert!(matches!(
+            pong,
+            ArcMessage::Pong {
+                timestamp_ms: 123456
+            }
+        ));
     }
 
     #[test]
     fn test_type_name_no_secrets() {
         // INV-10: type_name must only return static strings, never containing secret values
-        let msg = ArcMessage::AuthResponse { signature: [0xFFu8; 64] };
+        let msg = ArcMessage::AuthResponse {
+            signature: [0xFFu8; 64],
+        };
         assert_eq!(msg.type_name(), "AuthResponse");
         // The type name must NOT contain the signature bytes
         assert!(!msg.type_name().contains("FF"));
@@ -443,7 +462,9 @@ mod tests {
 
     #[test]
     fn test_goodbye_roundtrip() {
-        let msg = ArcMessage::Goodbye { reason: Some("user quit".to_string()) };
+        let msg = ArcMessage::Goodbye {
+            reason: Some("user quit".to_string()),
+        };
         let back = roundtrip(msg);
         match back {
             ArcMessage::Goodbye { reason: Some(r) } => assert_eq!(r, "user quit"),
@@ -462,12 +483,24 @@ mod tests {
     fn test_all_message_type_names() {
         // Ensure type_name() covers all variants without panic
         let messages = vec![
-            ArcMessage::Hello { protocol_version: 1, device_id: [0; 32], nonce: [0; 32], capabilities: vec![] },
-            ArcMessage::HelloAck { protocol_version: 1, device_id: [0; 32], nonce: [0; 32], selected_capabilities: vec![] },
+            ArcMessage::Hello {
+                protocol_version: 1,
+                device_id: [0; 32],
+                nonce: [0; 32],
+                capabilities: vec![],
+            },
+            ArcMessage::HelloAck {
+                protocol_version: 1,
+                device_id: [0; 32],
+                nonce: [0; 32],
+                selected_capabilities: vec![],
+            },
             ArcMessage::AuthChallenge { challenge: [0; 32] },
             ArcMessage::AuthResponse { signature: [0; 64] },
             ArcMessage::AuthOk,
-            ArcMessage::AuthFail { reason: AuthFailReason::BadSignature },
+            ArcMessage::AuthFail {
+                reason: AuthFailReason::BadSignature,
+            },
             ArcMessage::Ping { timestamp_ms: 0 },
             ArcMessage::Pong { timestamp_ms: 0 },
             ArcMessage::Goodbye { reason: None },
@@ -483,7 +516,7 @@ mod tests {
         let original_msg = b"hello control msg";
         let padded = pad_control_message(original_msg).unwrap();
         assert_eq!(padded.len(), CONTROL_PADDED_SIZE);
-        
+
         let stripped = strip_control_padding(&padded).unwrap();
         assert_eq!(stripped, original_msg);
 

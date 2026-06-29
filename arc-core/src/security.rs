@@ -27,7 +27,6 @@ pub enum SecurityError {
     InvalidPath(String),
     #[error("relay room compromised: {0} members in a 2-party room")]
     RelayCompromised(u8),
-
 }
 
 /// INV-7: Sanitize a filename for safe display in a terminal.
@@ -46,13 +45,7 @@ pub enum SecurityError {
 /// ```
 pub fn safe_display_name(raw: &str) -> String {
     raw.chars()
-        .map(|c| {
-            if c.is_control() {
-                '?'
-            } else {
-                c
-            }
-        })
+        .map(|c| if c.is_control() { '?' } else { c })
         .take(255)
         .collect()
 }
@@ -164,8 +157,15 @@ impl SandboxPolicy {
         // 1. Check blocked extensions
         if let Some(ext) = target_path.extension() {
             let ext_str = ext.to_string_lossy().to_lowercase();
-            if self.blocked_extensions.iter().any(|b| b.to_lowercase() == ext_str) {
-                return Err(anyhow::anyhow!("File extension '.{}' is blocked by sandbox policy", ext_str));
+            if self
+                .blocked_extensions
+                .iter()
+                .any(|b| b.to_lowercase() == ext_str)
+            {
+                return Err(anyhow::anyhow!(
+                    "File extension '.{}' is blocked by sandbox policy",
+                    ext_str
+                ));
             }
         }
 
@@ -186,7 +186,7 @@ impl SandboxPolicy {
                     target_path.to_path_buf()
                 }
             };
-            
+
             // Helper to strip Windows UNC prefix for consistent matching
             let clean_path = |p: &Path| -> PathBuf {
                 let s = p.to_string_lossy();
@@ -196,7 +196,7 @@ impl SandboxPolicy {
                     p.to_path_buf()
                 }
             };
-            
+
             let target_clean = clean_path(&target_canon);
             for dir in &self.allowed_dirs {
                 if !dir.exists() {
@@ -211,7 +211,10 @@ impl SandboxPolicy {
             }
 
             if !allowed {
-                return Err(anyhow::anyhow!("Path {:?} is outside the allowed sandbox directories", target_path));
+                return Err(anyhow::anyhow!(
+                    "Path {:?} is outside the allowed sandbox directories",
+                    target_path
+                ));
             }
         }
 
@@ -220,28 +223,36 @@ impl SandboxPolicy {
 }
 
 /// Unpack a tar archive safely to the destination directory, validating every entry to prevent path traversal (SEC-3).
-pub fn safe_unpack_tar(archive_file: std::fs::File, destination: &Path) -> Result<(), anyhow::Error> {
+pub fn safe_unpack_tar(
+    archive_file: std::fs::File,
+    destination: &Path,
+) -> Result<(), anyhow::Error> {
     let mut archive = tar::Archive::new(archive_file);
     if !destination.exists() {
         let _ = std::fs::create_dir_all(destination);
     }
     let canon_dest = std::fs::canonicalize(destination)?;
-    
+
     for entry_result in archive.entries()? {
         let mut entry = entry_result?;
         let entry_type = entry.header().entry_type();
         if entry_type.is_symlink() || entry_type.is_hard_link() {
-            return Err(anyhow::anyhow!("Tar symlinks or hardlinks are not allowed for security reasons"));
+            return Err(anyhow::anyhow!(
+                "Tar symlinks or hardlinks are not allowed for security reasons"
+            ));
         }
         let path = entry.path()?.to_path_buf();
         let path_str = path.to_string_lossy();
         let safe_relative = validate_path_component(&path_str)?;
         let dest_path = canon_dest.join(&safe_relative);
-        
+
         if dest_path.strip_prefix(&canon_dest).is_err() {
-            return Err(anyhow::anyhow!("Tar path traversal detected in entry: {}", path_str));
+            return Err(anyhow::anyhow!(
+                "Tar path traversal detected in entry: {}",
+                path_str
+            ));
         }
-        
+
         if let Some(parent) = dest_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -256,11 +267,28 @@ fn is_windows_reserved_name(name: &str) -> bool {
     let base = upper.split('.').next().unwrap_or(&upper);
     matches!(
         base,
-        "CON" | "PRN" | "AUX" | "NUL"
-            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
-            | "COM6" | "COM7" | "COM8" | "COM9"
-            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5"
-            | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
     )
 }
 
@@ -283,7 +311,10 @@ mod tests {
     fn test_safe_display_name_strips_control_chars() {
         let raw = "file\x00with\x01nulls\x7fand\x0adel";
         let safe = safe_display_name(raw);
-        assert!(!safe.chars().any(|c| c.is_control()), "no control chars in output");
+        assert!(
+            !safe.chars().any(|c| c.is_control()),
+            "no control chars in output"
+        );
     }
 
     #[test]
@@ -402,13 +433,13 @@ mod tests {
         let mut header = tar::Header::new_gnu();
         header.set_path("safe.txt").unwrap();
         header.set_size(7);
-        
+
         // Bypassing set_path checks by mutating raw bytes
         let raw_header = header.as_mut_bytes();
         let traversal_path = b"../outside.txt\0";
         raw_header[..traversal_path.len()].copy_from_slice(traversal_path);
         header.set_cksum();
-        
+
         builder.append(&header, b"travers".as_slice()).unwrap();
         builder.finish().unwrap();
 
@@ -423,12 +454,12 @@ mod tests {
         let mut header = tar::Header::new_gnu();
         header.set_path("safe2.txt").unwrap();
         header.set_size(3);
-        
+
         let raw_header = header.as_mut_bytes();
         let abs_path = b"/absolute.txt\0";
         raw_header[..abs_path.len()].copy_from_slice(abs_path);
         header.set_cksum();
-        
+
         builder.append(&header, b"abs".as_slice()).unwrap();
         builder.finish().unwrap();
 

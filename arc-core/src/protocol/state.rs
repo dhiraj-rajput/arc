@@ -134,23 +134,37 @@ pub fn next_state(state: &SessionState, msg: &ArcMessage) -> Option<SessionState
     match (state, msg) {
         (SessionState::Idle, ArcMessage::Hello { .. }) => Some(SessionState::Connected),
 
-        (SessionState::Connected, ArcMessage::HelloAck { .. }) => Some(SessionState::Authenticating),
+        (SessionState::Connected, ArcMessage::HelloAck { .. }) => {
+            Some(SessionState::Authenticating)
+        }
         (SessionState::Connected, ArcMessage::Hello { .. }) => Some(SessionState::Authenticating),
 
         (SessionState::Authenticating, ArcMessage::AuthOk) => Some(SessionState::Negotiating),
         (SessionState::Authenticating, ArcMessage::AuthFail { .. }) => Some(SessionState::Closed),
 
-        (SessionState::Negotiating, ArcMessage::TransferAccept { .. }) => Some(SessionState::Transferring),
-        (SessionState::Negotiating, ArcMessage::TransferReject { .. }) => Some(SessionState::Negotiating),
+        (SessionState::Negotiating, ArcMessage::TransferAccept { .. }) => {
+            Some(SessionState::Transferring)
+        }
+        (SessionState::Negotiating, ArcMessage::TransferReject { .. }) => {
+            Some(SessionState::Negotiating)
+        }
         (SessionState::Negotiating, ArcMessage::Goodbye { .. }) => Some(SessionState::Closed),
 
-        (SessionState::Transferring, ArcMessage::TransferComplete { .. }) => Some(SessionState::Completing),
-        (SessionState::Transferring, ArcMessage::TransferAbort { .. }) => Some(SessionState::Closed),
+        (SessionState::Transferring, ArcMessage::TransferComplete { .. }) => {
+            Some(SessionState::Completing)
+        }
+        (SessionState::Transferring, ArcMessage::TransferAbort { .. }) => {
+            Some(SessionState::Closed)
+        }
 
-        (SessionState::Completing, ArcMessage::TransferComplete { .. }) => Some(SessionState::IdleReady),
+        (SessionState::Completing, ArcMessage::TransferComplete { .. }) => {
+            Some(SessionState::IdleReady)
+        }
         (SessionState::Completing, ArcMessage::TransferAbort { .. }) => Some(SessionState::Closed),
 
-        (SessionState::IdleReady, ArcMessage::TransferOffer { .. }) => Some(SessionState::Negotiating),
+        (SessionState::IdleReady, ArcMessage::TransferOffer { .. }) => {
+            Some(SessionState::Negotiating)
+        }
         (SessionState::IdleReady, ArcMessage::Goodbye { .. }) => Some(SessionState::Closed),
 
         // Any state: relay compromise → Closed
@@ -232,7 +246,9 @@ mod tests {
 
     #[test]
     fn test_auth_fail_transitions_to_closed() {
-        let msg = ArcMessage::AuthFail { reason: AuthFailReason::BadSignature };
+        let msg = ArcMessage::AuthFail {
+            reason: AuthFailReason::BadSignature,
+        };
         let next = next_state(&SessionState::Authenticating, &msg);
         assert_eq!(next, Some(SessionState::Closed));
     }
@@ -241,7 +257,11 @@ mod tests {
     fn test_state_machine_happy_path() {
         // Simulate a complete session state progression
         let states = [
-            (SessionState::Connected, hello_msg(), SessionState::Authenticating),
+            (
+                SessionState::Connected,
+                hello_msg(),
+                SessionState::Authenticating,
+            ),
             (
                 SessionState::Authenticating,
                 ArcMessage::AuthOk,

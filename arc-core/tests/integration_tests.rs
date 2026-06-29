@@ -1,7 +1,7 @@
 mod common;
 
-use tokio::sync::mpsc;
 use tempfile::tempdir;
+use tokio::sync::mpsc;
 
 use arc_core::transfer::orchestrator::{
     run_pairing_receiver, run_pairing_sender, run_receiver, run_sender,
@@ -152,14 +152,7 @@ async fn test_integration_empty_file() {
     });
 
     let receiver_fut = arc_core::storage::TEST_IDENTITY.scope([1u8; 32], async {
-        run_receiver(
-            dest_dir_path.to_str().unwrap(),
-            phrase,
-            &ws_url,
-            None,
-            None,
-        )
-        .await
+        run_receiver(dest_dir_path.to_str().unwrap(), phrase, &ws_url, None, None).await
     });
 
     let (sender_res, receiver_res) = tokio::join!(sender_fut, receiver_fut);

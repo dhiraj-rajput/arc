@@ -1,10 +1,10 @@
-use std::path::Path;
-use tokio::sync::mpsc;
-use arc_core::get_identity_with_merged_config;
-use arc_core::transfer::orchestrator::run_receiver;
 use crate::ui::spawn_progress_task;
 use crate::ui::validate_passphrase;
+use arc_core::get_identity_with_merged_config;
+use arc_core::transfer::orchestrator::run_receiver;
+use std::path::Path;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
 
 pub async fn exec_receive(
     phrase: String,
@@ -44,7 +44,7 @@ pub async fn exec_receive(
 
     let stdout_tx_opt = if stdout { Some(stdout_tx) } else { None };
     let clipboard_content = run_receiver(&dir, &phrase, relay_url, Some(tx), stdout_tx_opt).await?;
-    
+
     if let Some(text) = clipboard_content {
         println!("Writing received text to system clipboard...");
         if let Ok(mut ctx) = arboard::Clipboard::new() {

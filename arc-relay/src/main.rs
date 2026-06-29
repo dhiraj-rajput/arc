@@ -13,28 +13,27 @@
 //! - All payload is encrypted by arc-core before reaching the relay
 
 use axum::{
+    Router,
     extract::{
+        ConnectInfo, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
-        ConnectInfo,
     },
     response::IntoResponse,
     routing::get,
-    Router,
 };
+use clap::Parser;
 use dashmap::DashMap;
+use prometheus::{IntCounter, IntGauge, Registry};
 use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, SocketAddr},
+    path::PathBuf,
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
-    path::PathBuf,
 };
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 use uuid::Uuid;
-use clap::Parser;
-use prometheus::{IntCounter, IntGauge, Registry};
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -50,7 +49,8 @@ fn registry() -> &'static Registry {
 fn active_rooms() -> &'static IntGauge {
     static ACTIVE_ROOMS: OnceLock<IntGauge> = OnceLock::new();
     ACTIVE_ROOMS.get_or_init(|| {
-        let gauge = IntGauge::new("arc_relay_active_rooms", "Number of currently active rooms").unwrap();
+        let gauge =
+            IntGauge::new("arc_relay_active_rooms", "Number of currently active rooms").unwrap();
         registry().register(Box::new(gauge.clone())).unwrap();
         gauge
     })
@@ -59,7 +59,11 @@ fn active_rooms() -> &'static IntGauge {
 fn active_connections() -> &'static IntGauge {
     static ACTIVE_CONNECTIONS: OnceLock<IntGauge> = OnceLock::new();
     ACTIVE_CONNECTIONS.get_or_init(|| {
-        let gauge = IntGauge::new("arc_relay_active_connections", "Number of currently active WebSocket connections").unwrap();
+        let gauge = IntGauge::new(
+            "arc_relay_active_connections",
+            "Number of currently active WebSocket connections",
+        )
+        .unwrap();
         registry().register(Box::new(gauge.clone())).unwrap();
         gauge
     })
@@ -68,7 +72,11 @@ fn active_connections() -> &'static IntGauge {
 fn bytes_relayed() -> &'static IntCounter {
     static BYTES_RELAYED_CELL: OnceLock<IntCounter> = OnceLock::new();
     BYTES_RELAYED_CELL.get_or_init(|| {
-        let counter = IntCounter::new("arc_relay_bytes_relayed_total", "Total bytes relayed through the server").unwrap();
+        let counter = IntCounter::new(
+            "arc_relay_bytes_relayed_total",
+            "Total bytes relayed through the server",
+        )
+        .unwrap();
         registry().register(Box::new(counter.clone())).unwrap();
         counter
     })
@@ -210,7 +218,10 @@ async fn ws_handler(
     let ip = addr.ip();
     let mut allowed = true;
     {
-        let entry = state.rate_limiter.entry(ip).or_insert_with(|| Mutex::new(TokenBucket::new(5.0)));
+        let entry = state
+            .rate_limiter
+            .entry(ip)
+            .or_insert_with(|| Mutex::new(TokenBucket::new(5.0)));
         if let Ok(mut bucket) = entry.lock() {
             // 5 max tokens, refills 0.1/sec (1 every 10 seconds)
             if !bucket.check_and_consume(5.0, 0.1) {
@@ -228,7 +239,7 @@ async fn ws_handler(
 
     // Limit WebSocket message size to 1 MB
     ws.max_message_size(1024 * 1024)
-      .on_upgrade(move |socket| handle_socket(socket, state, client_id_str()))
+        .on_upgrade(move |socket| handle_socket(socket, state, client_id_str()))
 }
 
 fn client_id_str() -> String {
@@ -241,7 +252,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, client_id: String
 
     let mut current_room: Option<String> = None;
     let mut room_rx: Option<broadcast::Receiver<BroadcastPayload>> = None;
-    
+
     // SEC-11: Per-connection message rate limit (20 tokens, refills 5/sec)
     let mut msg_limiter = TokenBucket::new(20.0);
 
@@ -345,7 +356,9 @@ async fn handle_join(
     }
 
     if state.rooms.len() >= state.max_rooms {
-        let err = RelayMessage::Error { message: "relay at capacity".to_string() };
+        let err = RelayMessage::Error {
+            message: "relay at capacity".to_string(),
+        };
         if let Ok(err_json) = serde_json::to_string(&err) {
             let _ = socket.send(Message::Text(err_json.into())).await;
         }
@@ -353,17 +366,15 @@ async fn handle_join(
     }
 
     let (member_count, rx) = {
-        let mut entry = state.rooms
-            .entry(room_id.clone())
-            .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(32);
-                RelayRoom {
-                    member_count: 0,
-                    max_members: MAX_MEMBERS_PER_ROOM, // Enforce server-side limit of 2 (INV-9)
-                    created_at: Instant::now(),
-                    tx,
-                }
-            });
+        let mut entry = state.rooms.entry(room_id.clone()).or_insert_with(|| {
+            let (tx, _) = broadcast::channel(32);
+            RelayRoom {
+                member_count: 0,
+                max_members: MAX_MEMBERS_PER_ROOM, // Enforce server-side limit of 2 (INV-9)
+                created_at: Instant::now(),
+                tx,
+            }
+        });
 
         if entry.member_count as usize >= entry.max_members {
             let err = RelayMessage::Error {
@@ -400,7 +411,9 @@ async fn handle_join(
         room_id: room_id.clone(),
         count: member_count,
     };
-    if let (Some(room), Ok(count_json)) = (state.rooms.get(&room_id), serde_json::to_string(&count_msg)) {
+    if let (Some(room), Ok(count_json)) =
+        (state.rooms.get(&room_id), serde_json::to_string(&count_msg))
+    {
         let _ = room.tx.send(BroadcastPayload {
             sender_id: "relay".to_string(),
             payload: count_json,
@@ -430,7 +443,9 @@ async fn handle_leave(state: &AppState, room_id: String, client_id: &str) {
         }
     }
     if remove_room {
-        state.rooms.remove_if(&room_id, |_, room| room.member_count == 0);
+        state
+            .rooms
+            .remove_if(&room_id, |_, room| room.member_count == 0);
     }
     active_rooms().set(state.rooms.len() as i64);
 }
@@ -441,11 +456,13 @@ async fn health() -> &'static str {
 
 static METRICS_TOKEN: OnceLock<String> = OnceLock::new();
 
-async fn metrics_handler(
-    headers: axum::http::HeaderMap,
-) -> impl IntoResponse {
-    let expected_token = METRICS_TOKEN.get().map(|s| s.as_str()).unwrap_or("disabled_default_token");
-    let authenticated = headers.get("Authorization")
+async fn metrics_handler(headers: axum::http::HeaderMap) -> impl IntoResponse {
+    let expected_token = METRICS_TOKEN
+        .get()
+        .map(|s| s.as_str())
+        .unwrap_or("disabled_default_token");
+    let authenticated = headers
+        .get("Authorization")
         .and_then(|h| h.to_str().ok())
         .map(|s| s == format!("Bearer {}", expected_token))
         .unwrap_or(false);
@@ -506,7 +523,10 @@ async fn main() -> anyhow::Result<()> {
 
     let token = std::env::var("ARC_RELAY_METRICS_TOKEN").unwrap_or_else(|_| {
         let rand_token = Uuid::new_v4().to_string();
-        info!("ARC_RELAY_METRICS_TOKEN env var not set. Generated a random secure token: {}", rand_token);
+        info!(
+            "ARC_RELAY_METRICS_TOKEN env var not set. Generated a random secure token: {}",
+            rand_token
+        );
         rand_token
     });
     let _ = METRICS_TOKEN.set(token);
@@ -523,7 +543,9 @@ async fn main() -> anyhow::Result<()> {
                     let expired = room.created_at < cutoff;
                     if expired {
                         warn!(room_id = %&room_id[..8.min(room_id.len())], "room expired (TTL)");
-                        let expiry_msg = RelayMessage::Error { message: "room expired".to_string() };
+                        let expiry_msg = RelayMessage::Error {
+                            message: "room expired".to_string(),
+                        };
                         if let Ok(payload_str) = serde_json::to_string(&expiry_msg) {
                             let _ = room.tx.send(BroadcastPayload {
                                 sender_id: "relay".to_string(),
@@ -589,9 +611,12 @@ async fn main() -> anyhow::Result<()> {
     } else {
         info!("Starting relay in plain HTTP/WS mode");
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-            .with_graceful_shutdown(shutdown_signal())
-            .await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     }
 
     Ok(())

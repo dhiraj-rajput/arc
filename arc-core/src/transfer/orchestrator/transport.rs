@@ -1,20 +1,26 @@
-use std::time::{Instant, Duration};
+use chacha20poly1305::{
+    ChaCha20Poly1305, Key, Nonce,
+    aead::{Aead, KeyInit},
+};
 use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, aead::{Aead, KeyInit}};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 use crate::crypto::identity::DeviceId;
 use crate::protocol::messages::ArcMessage;
 
-pub(crate) async fn send_msg_stream<S>(stream: &mut S, msg: &ArcMessage) -> Result<(), anyhow::Error>
+pub(crate) async fn send_msg_stream<S>(
+    stream: &mut S,
+    msg: &ArcMessage,
+) -> Result<(), anyhow::Error>
 where
     S: tokio::io::AsyncWrite + Unpin,
 {
     let bytes = msg.encode()?;
     let len = bytes.len() as u32;
-    
+
     let write_fut = async {
         stream.write_all(&len.to_be_bytes()).await?;
         stream.write_all(&bytes).await?;
@@ -22,7 +28,8 @@ where
         Ok::<(), anyhow::Error>(())
     };
 
-    tokio::time::timeout(Duration::from_secs(15), write_fut).await
+    tokio::time::timeout(Duration::from_secs(15), write_fut)
+        .await
         .map_err(|_| anyhow::anyhow!("Write timeout exceeded"))??;
     Ok(())
 }
@@ -36,7 +43,10 @@ where
         stream.read_exact(&mut len_bytes).await?;
         let len = u32::from_be_bytes(len_bytes) as usize;
         if len > 16 * 1024 * 1024 {
-            return Err(anyhow::anyhow!("Message size limit exceeded ({} > 16MB)", len));
+            return Err(anyhow::anyhow!(
+                "Message size limit exceeded ({} > 16MB)",
+                len
+            ));
         }
         let mut buf = vec![0u8; len];
         stream.read_exact(&mut buf).await?;
@@ -44,7 +54,8 @@ where
         Ok::<ArcMessage, anyhow::Error>(msg)
     };
 
-    let msg = tokio::time::timeout(Duration::from_secs(15), read_fut).await
+    let msg = tokio::time::timeout(Duration::from_secs(15), read_fut)
+        .await
         .map_err(|_| anyhow::anyhow!("Read timeout exceeded"))??;
     Ok(msg)
 }
@@ -65,7 +76,9 @@ impl RateLimiter {
 
     pub(crate) async fn throttle(&mut self, chunk_size: usize) {
         if let Some(limit) = self.bytes_per_sec {
-            if limit == 0 { return; }
+            if limit == 0 {
+                return;
+            }
             let target_duration = Duration::from_secs_f64(chunk_size as f64 / limit as f64);
             let elapsed = self.last_tick.elapsed();
             if elapsed < target_duration {
@@ -79,7 +92,8 @@ impl RateLimiter {
 pub fn encrypt_signal(key_bytes: &[u8; 32], plaintext: &[u8]) -> Result<String, anyhow::Error> {
     let cipher = ChaCha20Poly1305::new(Key::from_slice(key_bytes));
     let nonce_bytes: [u8; 12] = rand::random();
-    let ciphertext = cipher.encrypt(Nonce::from_slice(&nonce_bytes), plaintext)
+    let ciphertext = cipher
+        .encrypt(Nonce::from_slice(&nonce_bytes), plaintext)
         .map_err(|e| anyhow::anyhow!("signal encryption failed: {:?}", e))?;
     let mut combined = nonce_bytes.to_vec();
     combined.extend(ciphertext);
@@ -93,7 +107,8 @@ pub fn decrypt_signal(key_bytes: &[u8; 32], hex_str: &str) -> Result<Vec<u8>, an
     }
     let (nonce_bytes, ciphertext) = combined.split_at(12);
     let cipher = ChaCha20Poly1305::new(Key::from_slice(key_bytes));
-    let decrypted = cipher.decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
+    let decrypted = cipher
+        .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
         .map_err(|e| anyhow::anyhow!("decrypt failed: {:?}", e))?;
     Ok(decrypted)
 }
@@ -161,7 +176,9 @@ pub async fn run_pairing_sender(
     while let Some(msg_res) = ws_read.next().await {
         let msg = msg_res?;
         if let Message::Text(text) = msg {
-            if let Ok(WsRelayMessage::Signal { data }) = serde_json::from_str::<WsRelayMessage>(&text) {
+            if let Ok(WsRelayMessage::Signal { data }) =
+                serde_json::from_str::<WsRelayMessage>(&text)
+            {
                 if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
                     if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
                         receiver_handshake = Some(payload);
@@ -172,15 +189,25 @@ pub async fn run_pairing_sender(
         }
     }
 
-    let rx_payload = receiver_handshake.ok_or_else(|| anyhow::anyhow!("failed to receive receiver handshake"))?;
+    let rx_payload = receiver_handshake
+        .ok_or_else(|| anyhow::anyhow!("failed to receive receiver handshake"))?;
 
     // Verify signature
     if let Some(ref sig_bytes) = rx_payload.signature {
-        let sig: [u8; 64] = sig_bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
+        let sig: [u8; 64] = sig_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
         let mut sig_input = Vec::with_capacity(64);
         sig_input.extend_from_slice(&rx_payload.nonce);
         sig_input.extend_from_slice(&rx_payload.ephemeral_public);
-        if crate::crypto::identity::DeviceIdentity::verify_peer_signature(&rx_payload.device_id, &sig_input, &sig).is_err() {
+        if crate::crypto::identity::DeviceIdentity::verify_peer_signature(
+            &rx_payload.device_id,
+            &sig_input,
+            &sig,
+        )
+        .is_err()
+        {
             return Err(anyhow::anyhow!("Invalid handshake signature from receiver"));
         }
     } else {
@@ -216,7 +243,11 @@ pub async fn run_pairing_sender(
 
     // Save peer info
     let mut updated_config = config.clone();
-    if !updated_config.peers.iter().any(|p| p.device_id == rx_payload.device_id) {
+    if !updated_config
+        .peers
+        .iter()
+        .any(|p| p.device_id == rx_payload.device_id)
+    {
         updated_config.peers.push(crate::storage::PeerInfo {
             name: rx_payload.device_name.clone(),
             device_id: rx_payload.device_id,
@@ -281,7 +312,9 @@ pub async fn run_pairing_receiver(
     while let Some(msg_res) = ws_read.next().await {
         let msg = msg_res?;
         if let Message::Text(text) = msg {
-            if let Ok(WsRelayMessage::Signal { data }) = serde_json::from_str::<WsRelayMessage>(&text) {
+            if let Ok(WsRelayMessage::Signal { data }) =
+                serde_json::from_str::<WsRelayMessage>(&text)
+            {
                 if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
                     if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
                         sender_handshake = Some(payload);
@@ -292,15 +325,25 @@ pub async fn run_pairing_receiver(
         }
     }
 
-    let tx_payload = sender_handshake.ok_or_else(|| anyhow::anyhow!("failed to receive sender handshake"))?;
+    let tx_payload =
+        sender_handshake.ok_or_else(|| anyhow::anyhow!("failed to receive sender handshake"))?;
 
     // Verify signature
     if let Some(ref sig_bytes) = tx_payload.signature {
-        let sig: [u8; 64] = sig_bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
+        let sig: [u8; 64] = sig_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
         let mut sig_input = Vec::with_capacity(64);
         sig_input.extend_from_slice(&tx_payload.nonce);
         sig_input.extend_from_slice(&tx_payload.ephemeral_public);
-        if crate::crypto::identity::DeviceIdentity::verify_peer_signature(&tx_payload.device_id, &sig_input, &sig).is_err() {
+        if crate::crypto::identity::DeviceIdentity::verify_peer_signature(
+            &tx_payload.device_id,
+            &sig_input,
+            &sig,
+        )
+        .is_err()
+        {
             return Err(anyhow::anyhow!("Invalid handshake signature from sender"));
         }
     } else {
@@ -309,7 +352,11 @@ pub async fn run_pairing_receiver(
 
     // Save peer info
     let mut updated_config = config.clone();
-    if !updated_config.peers.iter().any(|p| p.device_id == tx_payload.device_id) {
+    if !updated_config
+        .peers
+        .iter()
+        .any(|p| p.device_id == tx_payload.device_id)
+    {
         updated_config.peers.push(crate::storage::PeerInfo {
             name: tx_payload.device_name.clone(),
             device_id: tx_payload.device_id,
@@ -324,9 +371,9 @@ pub async fn check_relay_status(relay_url: &str) -> Result<Duration, anyhow::Err
     let start = Instant::now();
     let (ws_stream, _) = connect_async(relay_url).await?;
     let (mut ws_write, mut ws_read) = ws_stream.split();
-    
+
     ws_write.send(Message::Ping(vec![].into())).await?;
-    
+
     while let Some(msg_res) = ws_read.next().await {
         let msg = msg_res?;
         if let Message::Pong(_) = msg {
@@ -338,12 +385,18 @@ pub async fn check_relay_status(relay_url: &str) -> Result<Duration, anyhow::Err
 
 pub async fn ping_peer(peer_name: &str) -> Result<Duration, anyhow::Error> {
     let (_, config) = crate::config::get_identity_with_merged_config()?;
-    let peer = config.peers.iter().find(|p| p.name == peer_name)
+    let peer = config
+        .peers
+        .iter()
+        .find(|p| p.name == peer_name)
         .ok_or_else(|| anyhow::anyhow!("Device not paired: {}", peer_name))?;
 
     let start = Instant::now();
     if let Ok(dm) = crate::transfer::discovery::DiscoveryManager::new() {
-        if let Some(_addr) = dm.discover_device(&peer.device_id, Duration::from_millis(config.transport.mdns_browse_timeout_ms)) {
+        if let Some(_addr) = dm.discover_device(
+            &peer.device_id,
+            Duration::from_millis(config.transport.mdns_browse_timeout_ms),
+        ) {
             return Ok(start.elapsed());
         }
     }
@@ -366,7 +419,11 @@ mod tests {
         // Second chunk call will throttle based on the first chunk's size
         limiter.throttle(1_048_576).await;
         let elapsed = start.elapsed();
-        assert!(elapsed >= Duration::from_millis(900), "Should throttle and take ~1s, took {:?}", elapsed);
+        assert!(
+            elapsed >= Duration::from_millis(900),
+            "Should throttle and take ~1s, took {:?}",
+            elapsed
+        );
     }
 
     #[tokio::test]
@@ -376,6 +433,10 @@ mod tests {
         limiter.throttle(10_000_000).await;
         limiter.throttle(10_000_000).await;
         let elapsed = start.elapsed();
-        assert!(elapsed < Duration::from_millis(50), "Should not throttle, took {:?}", elapsed);
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "Should not throttle, took {:?}",
+            elapsed
+        );
     }
 }

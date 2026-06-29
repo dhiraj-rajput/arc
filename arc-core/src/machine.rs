@@ -84,11 +84,7 @@ impl MachineCapacity {
         #[cfg(not(target_arch = "x86_64"))]
         let (has_aes_ni, has_avx2, has_avx512) = (false, false, false);
 
-        let platform = format!(
-            "{}/{}",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        );
+        let platform = format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH);
 
         debug!(
             physical_cpus,
@@ -197,8 +193,14 @@ mod tests {
         // Basic sanity: must have at least 1 CPU and 128 MiB RAM
         assert!(cap.logical_cpus >= 1, "must have at least 1 logical CPU");
         assert!(cap.physical_cpus >= 1, "must have at least 1 physical CPU");
-        assert!(cap.total_memory_mib >= 128, "must have at least 128 MiB RAM");
-        assert!(!cap.platform.is_empty(), "platform string must not be empty");
+        assert!(
+            cap.total_memory_mib >= 128,
+            "must have at least 128 MiB RAM"
+        );
+        assert!(
+            !cap.platform.is_empty(),
+            "platform string must not be empty"
+        );
     }
 
     #[test]
@@ -215,10 +217,7 @@ mod tests {
         assert_eq!(cap.optimal_chunk_size(10 * 1024 * 1024), 1024 * 1024);
 
         // 4 MB for large files
-        assert_eq!(
-            cap.optimal_chunk_size(200 * 1024 * 1024),
-            4 * 1024 * 1024
-        );
+        assert_eq!(cap.optimal_chunk_size(200 * 1024 * 1024), 4 * 1024 * 1024);
 
         // 8 MB for very large files
         assert_eq!(
@@ -239,7 +238,11 @@ mod tests {
     #[test]
     fn test_parallel_chunks_battery_saver() {
         let cap = MachineCapacity::detect();
-        assert_eq!(cap.optimal_parallel_chunks(true), 2, "battery saver must use 2 chunks");
+        assert_eq!(
+            cap.optimal_parallel_chunks(true),
+            2,
+            "battery saver must use 2 chunks"
+        );
         assert!(
             cap.optimal_parallel_chunks(false) >= 1,
             "normal mode must use at least 1 chunk stream"

@@ -19,13 +19,11 @@
 //! This construction is from the master plan §17.3 / INV-5.
 
 use aes_gcm::{
-    Aes256Gcm,
-    Nonce as AesNonce,
+    Aes256Gcm, Nonce as AesNonce,
     aead::{Aead as AesAead, KeyInit as AesKeyInit},
 };
 use chacha20poly1305::{
-    ChaCha20Poly1305,
-    Nonce as ChaChaNonce,
+    ChaCha20Poly1305, Nonce as ChaChaNonce,
     aead::{Aead as ChachaAead, KeyInit as ChachaKeyInit},
 };
 use thiserror::Error;
@@ -166,19 +164,25 @@ mod tests {
         let nonce = build_nonce(42, 0, Direction::ToReceiver);
         let plaintext = b"arc secure file transfer chunk data";
 
-        let ciphertext = encrypt_chunk(&key, &nonce, plaintext, suite)
-            .expect("encryption must succeed");
+        let ciphertext =
+            encrypt_chunk(&key, &nonce, plaintext, suite).expect("encryption must succeed");
 
-        assert_ne!(&ciphertext, plaintext, "ciphertext must differ from plaintext");
+        assert_ne!(
+            &ciphertext, plaintext,
+            "ciphertext must differ from plaintext"
+        );
         assert!(
             ciphertext.len() > plaintext.len(),
             "ciphertext must include auth tag"
         );
 
-        let recovered = decrypt_chunk(&key, &nonce, &ciphertext, suite)
-            .expect("decryption must succeed");
+        let recovered =
+            decrypt_chunk(&key, &nonce, &ciphertext, suite).expect("decryption must succeed");
 
-        assert_eq!(recovered, plaintext, "roundtrip must recover original plaintext");
+        assert_eq!(
+            recovered, plaintext,
+            "roundtrip must recover original plaintext"
+        );
     }
 
     #[test]
@@ -197,15 +201,21 @@ mod tests {
         let nonce = build_nonce(1, 0, Direction::ToReceiver);
         let plaintext = b"important data";
 
-        let mut ciphertext = encrypt_chunk(&key, &nonce, plaintext, CipherSuite::ChaCha20Poly1305Blake3)
-            .unwrap();
+        let mut ciphertext =
+            encrypt_chunk(&key, &nonce, plaintext, CipherSuite::ChaCha20Poly1305Blake3).unwrap();
 
         // Flip a bit in the middle of the ciphertext
         let mid = ciphertext.len() / 2;
         ciphertext[mid] ^= 0xFF;
 
         assert!(
-            decrypt_chunk(&key, &nonce, &ciphertext, CipherSuite::ChaCha20Poly1305Blake3).is_err(),
+            decrypt_chunk(
+                &key,
+                &nonce,
+                &ciphertext,
+                CipherSuite::ChaCha20Poly1305Blake3
+            )
+            .is_err(),
             "tampered ciphertext must be rejected"
         );
     }
@@ -215,10 +225,17 @@ mod tests {
         let key1 = generate_key();
         let key2 = generate_key();
         let nonce = build_nonce(0, 0, Direction::ToReceiver);
-        let ciphertext = encrypt_chunk(&key1, &nonce, b"data", CipherSuite::ChaCha20Poly1305Blake3).unwrap();
+        let ciphertext =
+            encrypt_chunk(&key1, &nonce, b"data", CipherSuite::ChaCha20Poly1305Blake3).unwrap();
 
         assert!(
-            decrypt_chunk(&key2, &nonce, &ciphertext, CipherSuite::ChaCha20Poly1305Blake3).is_err(),
+            decrypt_chunk(
+                &key2,
+                &nonce,
+                &ciphertext,
+                CipherSuite::ChaCha20Poly1305Blake3
+            )
+            .is_err(),
             "wrong key must be rejected"
         );
     }
@@ -272,6 +289,3 @@ mod tests {
         }
     }
 }
-
-
-

@@ -10,5 +10,5 @@ pub mod hash;
 pub mod identity;
 
 pub use cipher::{CipherSuite, decrypt_chunk, encrypt_chunk};
-pub use hash::{arc_fast_hash, blake3_hash_parallel, MerkleTree};
+pub use hash::{MerkleTree, arc_fast_hash, blake3_hash_parallel};
 pub use identity::{DeviceIdentity, SessionKeys, derive_key_from_phrase};

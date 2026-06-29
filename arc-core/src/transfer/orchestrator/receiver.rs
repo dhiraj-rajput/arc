@@ -1,19 +1,19 @@
 use std::fs;
 use std::path::Path;
 
-use tokio::sync::mpsc;
 use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use serde_json;
+use tokio::sync::mpsc;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
+use crate::compression::decompress_with_limit;
+use crate::crypto::cipher::{CipherSuite, Direction, build_nonce, decrypt_chunk};
 use crate::crypto::identity::EphemeralKeyPair;
 use crate::protocol::messages::{ArcMessage, TransferKind};
-use crate::crypto::cipher::{CipherSuite, decrypt_chunk, build_nonce, Direction};
-use crate::compression::decompress_with_limit;
 
 use super::transport::{
-    send_msg_stream, recv_msg_stream,
-    encrypt_signal, decrypt_signal, WsJoin, WsSignal, WsRelayMessage, HandshakePayload,
+    HandshakePayload, WsJoin, WsRelayMessage, WsSignal, decrypt_signal, encrypt_signal,
+    recv_msg_stream, send_msg_stream,
 };
 
 async fn run_quic_receiver_session(
@@ -25,7 +25,7 @@ async fn run_quic_receiver_session(
     stdout_tx: Option<mpsc::Sender<Vec<u8>>>,
 ) -> Result<Option<String>, anyhow::Error> {
     let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
-    use crate::protocol::state::{SessionState, validate_message_for_state, next_state};
+    use crate::protocol::state::{SessionState, next_state, validate_message_for_state};
     let mut current_state = SessionState::Idle;
 
     // 1. Hello exchange
@@ -36,11 +36,21 @@ async fn run_quic_receiver_session(
     tracing::debug!("Receiver: Protocol state transitioned to {}", current_state);
 
     let (peer_device_id, peer_capabilities) = match hello_msg {
-        ArcMessage::Hello { protocol_version, device_id, capabilities, .. } => {
+        ArcMessage::Hello {
+            protocol_version,
+            device_id,
+            capabilities,
+            ..
+        } => {
             if protocol_version != 1 {
-                let fail = ArcMessage::AuthFail { reason: crate::protocol::messages::AuthFailReason::VersionMismatch };
+                let fail = ArcMessage::AuthFail {
+                    reason: crate::protocol::messages::AuthFailReason::VersionMismatch,
+                };
                 let _ = send_msg_stream(&mut send_stream, &fail).await;
-                return Err(anyhow::anyhow!("Unsupported protocol version: {}", protocol_version));
+                return Err(anyhow::anyhow!(
+                    "Unsupported protocol version: {}",
+                    protocol_version
+                ));
             }
             (device_id, capabilities)
         }
@@ -48,21 +58,31 @@ async fn run_quic_receiver_session(
     };
 
     if peer_device_id != expected_peer_id {
-        let fail = ArcMessage::AuthFail { reason: crate::protocol::messages::AuthFailReason::DeviceNotPaired };
+        let fail = ArcMessage::AuthFail {
+            reason: crate::protocol::messages::AuthFailReason::DeviceNotPaired,
+        };
         let _ = send_msg_stream(&mut send_stream, &fail).await;
-        return Err(anyhow::anyhow!("Unexpected peer device ID: expected {}", hex::encode(expected_peer_id)));
+        return Err(anyhow::anyhow!(
+            "Unexpected peer device ID: expected {}",
+            hex::encode(expected_peer_id)
+        ));
     }
 
     // Negotiate capabilities (empty intersection returns NegotiationError::EmptyIntersection)
     let our_caps = crate::protocol::capability::default_capabilities();
-    let selected_capabilities = match crate::protocol::capability::negotiate_capabilities(&our_caps, &peer_capabilities) {
-        Ok(caps) => caps,
-        Err(_) => {
-            let fail = ArcMessage::AuthFail { reason: crate::protocol::messages::AuthFailReason::NoCommonSuite };
-            let _ = send_msg_stream(&mut send_stream, &fail).await;
-            return Err(anyhow::anyhow!("Capability negotiation failed: no common capabilities"));
-        }
-    };
+    let selected_capabilities =
+        match crate::protocol::capability::negotiate_capabilities(&our_caps, &peer_capabilities) {
+            Ok(caps) => caps,
+            Err(_) => {
+                let fail = ArcMessage::AuthFail {
+                    reason: crate::protocol::messages::AuthFailReason::NoCommonSuite,
+                };
+                let _ = send_msg_stream(&mut send_stream, &fail).await;
+                return Err(anyhow::anyhow!(
+                    "Capability negotiation failed: no common capabilities"
+                ));
+            }
+        };
 
     // Send HelloAck
     let hello_ack = ArcMessage::HelloAck {
@@ -86,15 +106,25 @@ async fn run_quic_receiver_session(
     let signature = match response_msg {
         ArcMessage::AuthResponse { signature } => signature,
         _ => {
-            let fail = ArcMessage::AuthFail { reason: crate::protocol::messages::AuthFailReason::ProtocolError };
+            let fail = ArcMessage::AuthFail {
+                reason: crate::protocol::messages::AuthFailReason::ProtocolError,
+            };
             let _ = send_msg_stream(&mut send_stream, &fail).await;
             return Err(anyhow::anyhow!("Expected AuthResponse"));
         }
     };
 
     // 4. Verify signature
-    if crate::crypto::identity::DeviceIdentity::verify_peer_signature(&peer_device_id, &challenge, &signature).is_err() {
-        let fail = ArcMessage::AuthFail { reason: crate::protocol::messages::AuthFailReason::BadSignature };
+    if crate::crypto::identity::DeviceIdentity::verify_peer_signature(
+        &peer_device_id,
+        &challenge,
+        &signature,
+    )
+    .is_err()
+    {
+        let fail = ArcMessage::AuthFail {
+            reason: crate::protocol::messages::AuthFailReason::BadSignature,
+        };
         let _ = send_msg_stream(&mut send_stream, &fail).await;
         return Err(anyhow::anyhow!("Authentication failed: BadSignature"));
     }
@@ -108,14 +138,46 @@ async fn run_quic_receiver_session(
     let offer_msg = recv_msg_stream(&mut recv_stream).await?;
     validate_message_for_state(&offer_msg, &current_state)?;
 
-    let (transfer_id, file_name, total_size, chunk_count, chunk_size, compression, file_hash, partial_hash, kind) = match &offer_msg {
-        ArcMessage::TransferOffer { transfer_id, file_name, total_size, chunk_count, chunk_size, compression, file_hash, partial_hash, kind, .. } => {
-            (*transfer_id, file_name.clone(), *total_size, *chunk_count, *chunk_size, *compression, *file_hash, *partial_hash, kind.clone())
-        }
+    let (
+        transfer_id,
+        file_name,
+        total_size,
+        chunk_count,
+        chunk_size,
+        compression,
+        file_hash,
+        partial_hash,
+        kind,
+    ) = match &offer_msg {
+        ArcMessage::TransferOffer {
+            transfer_id,
+            file_name,
+            total_size,
+            chunk_count,
+            chunk_size,
+            compression,
+            file_hash,
+            partial_hash,
+            kind,
+            ..
+        } => (
+            *transfer_id,
+            file_name.clone(),
+            *total_size,
+            *chunk_count,
+            *chunk_size,
+            *compression,
+            *file_hash,
+            *partial_hash,
+            kind.clone(),
+        ),
         _ => return Err(anyhow::anyhow!("Expected TransferOffer")),
     };
 
-    println!("Incoming transfer over QUIC: '{}' ({} bytes, {} chunks)", file_name, total_size, chunk_count);
+    println!(
+        "Incoming transfer over QUIC: '{}' ({} bytes, {} chunks)",
+        file_name, total_size, chunk_count
+    );
 
     // Resolve absolute safe output path to prevent path traversal (SEC-2)
     let output_path = match crate::security::resolve_safe_path(Path::new(output_dir), &file_name) {
@@ -123,17 +185,35 @@ async fn run_quic_receiver_session(
         Err(e) => {
             let abort = ArcMessage::TransferAbort {
                 transfer_id,
-                reason: crate::protocol::messages::AbortReason::ProtocolError(format!("Invalid path: {}", e)),
+                reason: crate::protocol::messages::AbortReason::ProtocolError(format!(
+                    "Invalid path: {}",
+                    e
+                )),
             };
             let _ = send_msg_stream(&mut send_stream, &abort).await;
-            return Err(anyhow::anyhow!("Path traversal or invalid path detected: {}", e));
+            return Err(anyhow::anyhow!(
+                "Path traversal or invalid path detected: {}",
+                e
+            ));
         }
     };
-    let safe_name = output_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let safe_name = output_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
 
-    let mut resume_state = match crate::transfer::resume::ResumeState::load_from_disk(&transfer_id, file_hash, chunk_count) {
+    let mut resume_state = match crate::transfer::resume::ResumeState::load_from_disk(
+        &transfer_id,
+        file_hash,
+        chunk_count,
+    ) {
         Ok(state) => {
-            println!("Resuming transfer from chunk {}/{}...", state.received_count(), chunk_count);
+            println!(
+                "Resuming transfer from chunk {}/{}...",
+                state.received_count(),
+                chunk_count
+            );
             state
         }
         Err(_) => {
@@ -141,21 +221,36 @@ async fn run_quic_receiver_session(
             if output_path.exists() && output_path.is_file() {
                 if let Ok(meta) = std::fs::metadata(&output_path) {
                     if meta.len() == total_size {
-                        if let Ok(local_partial) = crate::crypto::hash::arc_fast_hash(&output_path) {
+                        if let Ok(local_partial) = crate::crypto::hash::arc_fast_hash(&output_path)
+                        {
                             if local_partial == partial_hash {
-                                if let Ok(local_full) = crate::crypto::hash::blake3_hash_file(&output_path) {
+                                if let Ok(local_full) =
+                                    crate::crypto::hash::blake3_hash_file(&output_path)
+                                {
                                     if local_full == file_hash {
-                                        println!("File '{}' is already present and verified. Skipping transfer (deduplication).", safe_name);
-                                        let mut state = crate::transfer::resume::ResumeState::new(chunk_count, file_hash);
+                                        println!(
+                                            "File '{}' is already present and verified. Skipping transfer (deduplication).",
+                                            safe_name
+                                        );
+                                        let mut state = crate::transfer::resume::ResumeState::new(
+                                            chunk_count,
+                                            file_hash,
+                                        );
                                         for idx in 0..chunk_count {
                                             state.mark_received(idx);
                                         }
                                         state
                                     } else {
-                                        crate::transfer::resume::ResumeState::new(chunk_count, file_hash)
+                                        crate::transfer::resume::ResumeState::new(
+                                            chunk_count,
+                                            file_hash,
+                                        )
                                     }
                                 } else {
-                                    crate::transfer::resume::ResumeState::new(chunk_count, file_hash)
+                                    crate::transfer::resume::ResumeState::new(
+                                        chunk_count,
+                                        file_hash,
+                                    )
                                 }
                             } else {
                                 crate::transfer::resume::ResumeState::new(chunk_count, file_hash)
@@ -208,7 +303,8 @@ async fn run_quic_receiver_session(
                 .write(true)
                 .create(true)
                 .truncate(!is_resuming)
-                .open(&output_path).await?;
+                .open(&output_path)
+                .await?;
             if total_size > 0 {
                 f.set_len(total_size).await?;
             }
@@ -232,13 +328,24 @@ async fn run_quic_receiver_session(
         }
 
         match chunk_msg {
-            ArcMessage::Chunk { index, hash, data: enc_data, is_last, .. } => {
+            ArcMessage::Chunk {
+                index,
+                hash,
+                data: enc_data,
+                is_last,
+                ..
+            } => {
                 let nonce = build_nonce(session_id, message_index, Direction::ToReceiver);
                 message_index += 1;
 
                 let suite = CipherSuite::ChaCha20Poly1305Blake3;
-                let decrypted_data = decrypt_chunk(&session_keys.sender_key, &nonce, &enc_data, suite)?;
-                let decompressed = decompress_with_limit(&decrypted_data, compression, (chunk_size as usize).max(1024 * 1024) * 2)?;
+                let decrypted_data =
+                    decrypt_chunk(&session_keys.sender_key, &nonce, &enc_data, suite)?;
+                let decompressed = decompress_with_limit(
+                    &decrypted_data,
+                    compression,
+                    (chunk_size as usize).max(1024 * 1024) * 2,
+                )?;
 
                 let chunk_hash = crate::crypto::hash::blake3_hash_parallel(&decompressed);
                 if chunk_hash != hash {
@@ -266,7 +373,7 @@ async fn run_quic_receiver_session(
 
                 received_chunks += 1;
                 resume_state.mark_received(index);
-                
+
                 // Batch save to disk to reduce disk I/O overhead
                 if index % 10 == 0 || is_last || received_chunks == chunk_count {
                     let _ = resume_state.save_to_disk(&transfer_id);
@@ -276,35 +383,37 @@ async fn run_quic_receiver_session(
                     let _ = tx.send((received_chunks, chunk_count)).await;
                 }
 
-                let ack = ArcMessage::ChunkAck {
-                    transfer_id,
-                    index,
-                };
+                let ack = ArcMessage::ChunkAck { transfer_id, index };
                 send_msg_stream(&mut send_stream, &ack).await?;
 
                 if is_last {
                     // Handled when TransferComplete arrives
                 }
             }
-            ArcMessage::TransferComplete { .. } => {
+            ArcMessage::TransferComplete { file_hash: complete_hash, .. } => {
                 let _ = crate::transfer::resume::ResumeState::delete_from_disk(&transfer_id);
                 let mut clipboard_content = None;
                 if let Some(ref mut f) = file {
                     use tokio::io::AsyncWriteExt;
                     f.flush().await?;
                     f.sync_all().await?;
-                    
+
                     if is_directory {
                         if let Some(ref tp) = temp_file_path {
                             println!("Unpacking directory to {:?}...", output_dir);
                             let file = std::fs::File::open(tp)?;
                             crate::security::safe_unpack_tar(file, Path::new(output_dir))?;
-                            println!("Directory unpacked successfully! Running folder Merkle forest verification...");
-                            
+                            println!(
+                                "Directory unpacked successfully! Running folder Merkle forest verification..."
+                            );
+
                             let unpacked_dir_path = Path::new(output_dir).join(&file_name);
-                            let dir_hash = crate::crypto::hash::blake3_hash_dir(&unpacked_dir_path)?;
-                            if dir_hash != file_hash {
-                                return Err(anyhow::anyhow!("Directory Merkle forest verification failed! Directory contents do not match expected root."));
+                            let dir_hash =
+                                crate::crypto::hash::blake3_hash_dir(&unpacked_dir_path)?;
+                            if dir_hash != complete_hash {
+                                return Err(anyhow::anyhow!(
+                                    "Directory Merkle forest verification failed! Directory contents do not match expected root."
+                                ));
                             }
                             println!("Directory Merkle forest verification successful!");
                             let _ = std::fs::remove_file(tp);
@@ -316,10 +425,10 @@ async fn run_quic_receiver_session(
                             &output_path
                         };
                         let final_hash = crate::crypto::hash::blake3_hash_file(hash_path)?;
-                        if final_hash != file_hash {
+                        if final_hash != complete_hash {
                             return Err(anyhow::anyhow!("Final file hash mismatch!"));
                         }
-                        
+
                         if let Some(ref tp) = temp_file_path {
                             if is_clipboard {
                                 let text = std::fs::read_to_string(tp)?;
@@ -332,7 +441,7 @@ async fn run_quic_receiver_session(
                     }
                 } else {
                     let final_hash = *overall_hasher.finalize().as_bytes();
-                    if final_hash != file_hash {
+                    if final_hash != complete_hash {
                         return Err(anyhow::anyhow!("Final file hash mismatch!"));
                     }
                     println!("Stream verified successfully!");
@@ -400,7 +509,9 @@ pub async fn run_receiver(
                 match relay_msg {
                     WsRelayMessage::Signal { data } => {
                         if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                            if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                            if let Ok(payload) =
+                                serde_json::from_slice::<HandshakePayload>(&decrypted)
+                            {
                                 sender_handshake = Some(payload);
                                 break;
                             }
@@ -415,15 +526,25 @@ pub async fn run_receiver(
         }
     }
 
-    let tx_payload = sender_handshake.ok_or_else(|| anyhow::anyhow!("failed to receive sender handshake"))?;
+    let tx_payload =
+        sender_handshake.ok_or_else(|| anyhow::anyhow!("failed to receive sender handshake"))?;
 
     // Verify signature
     if let Some(ref sig_bytes) = tx_payload.signature {
-        let sig: [u8; 64] = sig_bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
+        let sig: [u8; 64] = sig_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
         let mut sig_input = Vec::with_capacity(64);
         sig_input.extend_from_slice(&tx_payload.nonce);
         sig_input.extend_from_slice(&tx_payload.ephemeral_public);
-        if crate::crypto::identity::DeviceIdentity::verify_peer_signature(&tx_payload.device_id, &sig_input, &sig).is_err() {
+        if crate::crypto::identity::DeviceIdentity::verify_peer_signature(
+            &tx_payload.device_id,
+            &sig_input,
+            &sig,
+        )
+        .is_err()
+        {
             return Err(anyhow::anyhow!("Invalid handshake signature from sender"));
         }
     } else {
@@ -461,11 +582,16 @@ pub async fn run_receiver(
 
     // Perform DH key exchange
     let tx_ephemeral_pub = x25519_dalek::PublicKey::from(tx_payload.ephemeral_public);
-    let session_keys = our_ephemeral.derive_session_keys(&tx_ephemeral_pub, &our_nonce, &tx_payload.nonce);
+    let session_keys =
+        our_ephemeral.derive_session_keys(&tx_ephemeral_pub, &our_nonce, &tx_payload.nonce);
 
     // Save peer info
     let mut updated_config = config.clone();
-    if !updated_config.peers.iter().any(|p| p.device_id == tx_payload.device_id) {
+    if !updated_config
+        .peers
+        .iter()
+        .any(|p| p.device_id == tx_payload.device_id)
+    {
         updated_config.peers.push(crate::storage::PeerInfo {
             name: tx_payload.device_name.clone(),
             device_id: tx_payload.device_id,
@@ -484,7 +610,8 @@ pub async fn run_receiver(
         tx_payload.device_id,
         progress_tx.clone(),
         stdout_tx.clone(),
-    ).await?;
+    )
+    .await?;
 
     Ok(clipboard_res)
 }

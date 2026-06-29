@@ -10,19 +10,23 @@
 //! - `config`: Layered configuration loading (defaults < file < env < CLI)
 
 pub mod compression;
+pub mod config;
 pub mod crypto;
+pub mod keystore;
 pub mod machine;
 pub mod protocol;
 pub mod security;
-pub mod transfer;
 pub mod storage;
-pub mod keystore;
-pub mod config;
+pub mod transfer;
 
 // Re-export the most commonly used types
+pub use config::{get_identity_with_merged_config, load_merged_config};
+pub use crypto::hash::{blake3_hash_dir, blake3_hash_file};
 pub use machine::MachineCapacity;
 pub use protocol::messages::ArcMessage;
-pub use security::{safe_display_name, validate_path_component, safe_unpack_tar, SandboxPolicy};
-pub use storage::{get_or_create_identity, load_config, save_config, wipe_config, ArcConfig, PeerInfo, TransferHistoryEntry, add_transfer_history, get_transfer_history, get_db_conn, get_db_path, ENV_CONFIG_DIR};
-pub use config::{load_merged_config, get_identity_with_merged_config};
-pub use crypto::hash::{blake3_hash_file, blake3_hash_dir};
+pub use security::{SandboxPolicy, safe_display_name, safe_unpack_tar, validate_path_component};
+pub use storage::{
+    ArcConfig, ENV_CONFIG_DIR, PeerInfo, TransferHistoryEntry, add_transfer_history, get_db_conn,
+    get_db_path, get_or_create_identity, get_transfer_history, load_config, save_config,
+    wipe_config,
+};

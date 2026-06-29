@@ -19,10 +19,7 @@ pub async fn exec_verify(path: String, hash: String) -> anyhow::Result<()> {
 
     let hex_hash = hex::encode(actual_hash);
     if hex_hash == hash.to_lowercase() {
-        println!(
-            "✅ {}: OK (BLAKE3 matches)",
-            safe_display_name(&path)
-        );
+        println!("✅ {}: OK (BLAKE3 matches)", safe_display_name(&path));
     } else {
         println!("❌ {}: MISMATCH", safe_display_name(&path));
         println!("   Expected: {hash}");

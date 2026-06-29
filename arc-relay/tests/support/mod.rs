@@ -104,8 +104,7 @@ impl InProcessRelay {
                                 } else if msg_type == "signal" {
                                     let room_id =
                                         val["room_id"].as_str().unwrap_or_default().to_string();
-                                    let data =
-                                        val["data"].as_str().unwrap_or_default().to_string();
+                                    let data = val["data"].as_str().unwrap_or_default().to_string();
                                     let senders = {
                                         let r = rooms.lock().unwrap();
                                         r.get(&room_id)

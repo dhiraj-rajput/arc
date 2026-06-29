@@ -10,11 +10,11 @@
 //! stalling earlier stages — naturally rate-matching disk I/O to network throughput.
 //! This prevents OOM on large files without explicit memory management.
 
-use crate::compression::{compress, CompressionAlgo, CompressionError};
-use crate::crypto::cipher::{build_nonce, encrypt_chunk, CipherSuite, CipherError, Direction};
+use crate::compression::{CompressionAlgo, CompressionError, compress};
+use crate::crypto::cipher::{CipherError, CipherSuite, Direction, build_nonce, encrypt_chunk};
 use crate::crypto::hash::blake3_hash_parallel;
-use tokio::sync::mpsc;
 use thiserror::Error;
+use tokio::sync::mpsc;
 
 /// A raw chunk of file data, before any processing.
 #[derive(Debug)]
@@ -67,9 +67,7 @@ pub enum PipelineError {
         source: CipherError,
     },
     #[error("stage {stage:?}: channel send failed (receiver dropped)")]
-    ChannelClosed {
-        stage: PipelineStage,
-    },
+    ChannelClosed { stage: PipelineStage },
 }
 
 /// A backpressure-bounded transfer pipeline.
@@ -130,7 +128,8 @@ impl TransferPipeline {
                 let nonce = build_nonce(session_id, message_index, Direction::ToReceiver);
                 message_index += 1;
 
-                let encrypted = match encrypt_chunk(&session_key, &nonce, &chunk.compressed, suite) {
+                let encrypted = match encrypt_chunk(&session_key, &nonce, &chunk.compressed, suite)
+                {
                     Ok(e) => e,
                     Err(_) => continue, // log error in production
                 };
@@ -156,9 +155,13 @@ impl TransferPipeline {
         if let Some(ref tx) = self.compress_tx {
             tx.send(chunk)
                 .await
-                .map_err(|_| PipelineError::ChannelClosed { stage: PipelineStage::Compress })
+                .map_err(|_| PipelineError::ChannelClosed {
+                    stage: PipelineStage::Compress,
+                })
         } else {
-            Err(PipelineError::ChannelClosed { stage: PipelineStage::Compress })
+            Err(PipelineError::ChannelClosed {
+                stage: PipelineStage::Compress,
+            })
         }
     }
 
@@ -218,7 +221,13 @@ mod tests {
     #[tokio::test]
     async fn test_pipeline_multiple_chunks() {
         let key = generate_key();
-        let mut pipeline = TransferPipeline::new(4, CompressionAlgo::Zstd, 1, key, CipherSuite::ChaCha20Poly1305Blake3);
+        let mut pipeline = TransferPipeline::new(
+            4,
+            CompressionAlgo::Zstd,
+            1,
+            key,
+            CipherSuite::ChaCha20Poly1305Blake3,
+        );
 
         let chunks_to_send = 5usize;
         for i in 0..chunks_to_send {

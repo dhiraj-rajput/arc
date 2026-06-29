@@ -90,8 +90,8 @@ impl DeviceIdentity {
         signature_bytes: &[u8; 64],
     ) -> Result<(), IdentityError> {
         use ed25519_dalek::Verifier;
-        let verifying_key = VerifyingKey::from_bytes(peer_device_id)
-            .map_err(|_| IdentityError::BadSignature)?;
+        let verifying_key =
+            VerifyingKey::from_bytes(peer_device_id).map_err(|_| IdentityError::BadSignature)?;
         let sig = ed25519_dalek::Signature::from_bytes(signature_bytes);
         verifying_key
             .verify(message, &sig)
@@ -197,7 +197,8 @@ impl EphemeralKeyPair {
         okm.zeroize();
 
         let salt_bytes = salt.as_bytes();
-        let session_id = u32::from_le_bytes([salt_bytes[0], salt_bytes[1], salt_bytes[2], salt_bytes[3]]);
+        let session_id =
+            u32::from_le_bytes([salt_bytes[0], salt_bytes[1], salt_bytes[2], salt_bytes[3]]);
 
         SessionKeys {
             sender_key,
@@ -291,7 +292,10 @@ mod tests {
         let keys2 = alice2.derive_session_keys(&bob2.public.clone(), &nonces.0, &nonces.1);
 
         // Different ephemeral keys → different session keys (forward secrecy)
-        assert_ne!(keys1.sender_key, keys2.sender_key, "session keys must be unique");
+        assert_ne!(
+            keys1.sender_key, keys2.sender_key,
+            "session keys must be unique"
+        );
     }
 
     #[test]
@@ -303,6 +307,3 @@ mod tests {
         assert!(vk.is_ok(), "device_id must be a valid Ed25519 public key");
     }
 }
-
-
-

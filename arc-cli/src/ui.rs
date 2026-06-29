@@ -4,29 +4,28 @@ use rand::RngExt;
 
 /// 1296-word list (6^4) based on EFF short wordlist for memorable, high-entropy passphrases.
 const WORDLIST: &[&str] = &[
-    "acid", "acme", "acre", "acts", "aged", "aide", "aims", "ajar", "ally", "also",
-    "amid", "ample", "ankle", "anvil", "apex", "arch", "area", "army", "atom", "aunt",
-    "avid", "axis", "azure", "badge", "baker", "barn", "base", "bath", "bead", "beam",
-    "bean", "bear", "beat", "bell", "belt", "bend", "best", "bike", "bird", "bite",
-    "blade", "blank", "blast", "blaze", "bleak", "blend", "bless", "bliss", "block", "bloom",
-    "blown", "bluff", "blunt", "blur", "board", "boat", "bold", "bolt", "bomb", "bond",
-    "bone", "bonus", "boost", "born", "boss", "bound", "brace", "brain", "brave", "bread",
-    "break", "bred", "breed", "brick", "bride", "brief", "brisk", "broad", "broke", "brook",
-    "broom", "brush", "brute", "budge", "build", "bulge", "bulk", "bump", "bunch", "burn",
-    "burst", "buyer", "cabin", "cable", "camel", "camp", "candy", "cape", "cargo", "carry",
-    "carve", "catch", "cause", "cedar", "chain", "chair", "chalk", "champ", "chaos", "charm",
-    "chase", "cheap", "check", "cheek", "chess", "chest", "chief", "child", "chill", "china",
-    "chip", "choir", "chunk", "civic", "civil", "claim", "clamp", "clash", "clasp", "class",
-    "clean", "clear", "clerk", "click", "cliff", "climb", "cling", "clip", "cloak", "clock",
-    "clone", "close", "cloth", "cloud", "clown", "club", "clue", "clump", "coach", "coast",
-    "cobra", "code", "coil", "cold", "comet", "comic", "coral", "cord", "core", "corps",
-    "couch", "count", "court", "cover", "crack", "craft", "crane", "crash", "crawl", "crazy",
-    "cream", "creek", "crest", "crew", "crisp", "cross", "crowd", "crown", "crude", "crush",
-    "cubic", "curve", "cycle", "daily", "dance", "darts", "dawn", "dealt", "decay", "deck",
-    "decor", "decoy", "delta", "demon", "dense", "depot", "depth", "derby", "desk", "dew",
-    "diary", "digit", "ditch", "dodge", "donor", "donut", "doubt", "draft", "drain", "drake",
-    "drape", "drawn", "dream", "dress", "drift", "drill", "drink", "drive", "drone", "drops",
-    "drove", "drums", "drunk", "dryer", "ducky", "dug", "dummy", "dunce", "dune", "dusk",
+    "acid", "acme", "acre", "acts", "aged", "aide", "aims", "ajar", "ally", "also", "amid",
+    "ample", "ankle", "anvil", "apex", "arch", "area", "army", "atom", "aunt", "avid", "axis",
+    "azure", "badge", "baker", "barn", "base", "bath", "bead", "beam", "bean", "bear", "beat",
+    "bell", "belt", "bend", "best", "bike", "bird", "bite", "blade", "blank", "blast", "blaze",
+    "bleak", "blend", "bless", "bliss", "block", "bloom", "blown", "bluff", "blunt", "blur",
+    "board", "boat", "bold", "bolt", "bomb", "bond", "bone", "bonus", "boost", "born", "boss",
+    "bound", "brace", "brain", "brave", "bread", "break", "bred", "breed", "brick", "bride",
+    "brief", "brisk", "broad", "broke", "brook", "broom", "brush", "brute", "budge", "build",
+    "bulge", "bulk", "bump", "bunch", "burn", "burst", "buyer", "cabin", "cable", "camel", "camp",
+    "candy", "cape", "cargo", "carry", "carve", "catch", "cause", "cedar", "chain", "chair",
+    "chalk", "champ", "chaos", "charm", "chase", "cheap", "check", "cheek", "chess", "chest",
+    "chief", "child", "chill", "china", "chip", "choir", "chunk", "civic", "civil", "claim",
+    "clamp", "clash", "clasp", "class", "clean", "clear", "clerk", "click", "cliff", "climb",
+    "cling", "clip", "cloak", "clock", "clone", "close", "cloth", "cloud", "clown", "club", "clue",
+    "clump", "coach", "coast", "cobra", "code", "coil", "cold", "comet", "comic", "coral", "cord",
+    "core", "corps", "couch", "count", "court", "cover", "crack", "craft", "crane", "crash",
+    "crawl", "crazy", "cream", "creek", "crest", "crew", "crisp", "cross", "crowd", "crown",
+    "crude", "crush", "cubic", "curve", "cycle", "daily", "dance", "darts", "dawn", "dealt",
+    "decay", "deck", "decor", "decoy", "delta", "demon", "dense", "depot", "depth", "derby",
+    "desk", "dew", "diary", "digit", "ditch", "dodge", "donor", "donut", "doubt", "draft", "drain",
+    "drake", "drape", "drawn", "dream", "dress", "drift", "drill", "drink", "drive", "drone",
+    "drops", "drove", "drums", "drunk", "dryer", "ducky", "dug", "dummy", "dunce", "dune", "dusk",
     "dusty", "dwarf", "dying", "eager", "eagle", "earth", "easel", "eaten", "eaves", "ebony",
     "edged", "eerie", "eight", "elbow", "elder", "elect", "elfin", "elite", "embed", "ember",
     "empty", "ended", "enemy", "enjoy", "entry", "envoy", "equal", "equip", "erase", "error",
@@ -159,17 +158,16 @@ pub fn setup_progress_bar(total: u64, is_sender: bool) -> indicatif::ProgressBar
         };
         progress.set_style(
             indicatif::ProgressStyle::default_spinner()
-                .template(&format!("{{spinner:.green}} [{{elapsed_precise}}] {{pos}} {msg}"))
+                .template(&format!(
+                    "{{spinner:.green}} [{{elapsed_precise}}] {{pos}} {msg}"
+                ))
                 .unwrap(),
         );
         progress
     }
 }
 
-pub fn spawn_progress_task(
-    mut rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
-    is_sender: bool,
-) {
+pub fn spawn_progress_task(mut rx: tokio::sync::mpsc::Receiver<(u32, u32)>, is_sender: bool) {
     tokio::spawn(async move {
         let mut pb = None;
         while let Some((curr, total)) = rx.recv().await {

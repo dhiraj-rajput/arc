@@ -90,17 +90,26 @@ pub struct CapabilityTLV {
 impl CapabilityTLV {
     /// Create a boolean flag capability (no value bytes).
     pub fn flag(cap_type: CapabilityType) -> Self {
-        Self { cap_type, value: vec![] }
+        Self {
+            cap_type,
+            value: vec![],
+        }
     }
 
     /// Create a u8 parameter capability.
     pub fn with_u8(cap_type: CapabilityType, val: u8) -> Self {
-        Self { cap_type, value: vec![val] }
+        Self {
+            cap_type,
+            value: vec![val],
+        }
     }
 
     /// Create a u32 parameter capability.
     pub fn with_u32(cap_type: CapabilityType, val: u32) -> Self {
-        Self { cap_type, value: val.to_le_bytes().to_vec() }
+        Self {
+            cap_type,
+            value: val.to_le_bytes().to_vec(),
+        }
     }
 
     /// Returns the value as u8, if applicable.
@@ -225,9 +234,13 @@ mod tests {
     #[test]
     fn test_default_capabilities_non_empty() {
         let caps = default_capabilities();
-        assert!(!caps.is_empty(), "must have at least some default capabilities");
         assert!(
-            caps.iter().any(|c| c.cap_type == CapabilityType::Blake3VerifiedStreaming),
+            !caps.is_empty(),
+            "must have at least some default capabilities"
+        );
+        assert!(
+            caps.iter()
+                .any(|c| c.cap_type == CapabilityType::Blake3VerifiedStreaming),
             "BLAKE3 verified streaming must be in defaults"
         );
     }
@@ -244,11 +257,17 @@ mod tests {
         ];
         let negotiated = negotiate_capabilities(&ours, &theirs).unwrap();
         assert_eq!(negotiated.len(), 2);
-        
-        let zstd_cap = negotiated.iter().find(|c| c.cap_type == CapabilityType::CompressionZstd).unwrap();
+
+        let zstd_cap = negotiated
+            .iter()
+            .find(|c| c.cap_type == CapabilityType::CompressionZstd)
+            .unwrap();
         assert_eq!(zstd_cap.as_u8(), Some(3)); // Minimum of 9 and 3
-        
-        let mp_cap = negotiated.iter().find(|c| c.cap_type == CapabilityType::QuicMultipath).unwrap();
+
+        let mp_cap = negotiated
+            .iter()
+            .find(|c| c.cap_type == CapabilityType::QuicMultipath)
+            .unwrap();
         assert_eq!(mp_cap.as_u32(), Some(42000)); // Minimum of 42000 and 50000
     }
 }

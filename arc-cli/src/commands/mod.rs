@@ -1,10 +1,10 @@
-pub mod send;
-pub mod receive;
+pub mod clipboard;
+pub mod config;
+pub mod discover;
 pub mod pair;
 pub mod peers;
-pub mod config;
-pub mod relay;
-pub mod discover;
-pub mod clipboard;
-pub mod verify;
 pub mod ping;
+pub mod receive;
+pub mod relay;
+pub mod send;
+pub mod verify;

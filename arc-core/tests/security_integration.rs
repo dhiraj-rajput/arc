@@ -19,7 +19,7 @@ fn test_terminal_injection_filename_display() {
 
 #[test]
 fn test_decompression_bomb_rejected() {
-    use arc_core::compression::{decompress_with_limit, CompressionAlgo};
+    use arc_core::compression::{CompressionAlgo, decompress_with_limit};
     let compressed = zstd::encode_all(vec![0u8; 4096].as_slice(), 3).unwrap();
     let result = decompress_with_limit(&compressed, CompressionAlgo::Zstd, 512);
     assert!(result.is_err());

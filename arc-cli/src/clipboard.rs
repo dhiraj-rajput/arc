@@ -5,8 +5,8 @@
 //! to prevent echo loops when syncing between devices.
 
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::Duration;
 
@@ -73,7 +73,11 @@ impl ClipboardWatcher {
             let mut last_text = clipboard.get_text().unwrap_or_default();
 
             while running.load(Ordering::SeqCst) {
-                if let Some(text) = clipboard.get_text().ok().filter(|t| t != &last_text && !t.is_empty()) {
+                if let Some(text) = clipboard
+                    .get_text()
+                    .ok()
+                    .filter(|t| t != &last_text && !t.is_empty())
+                {
                     let seq = sequence.fetch_add(1, Ordering::SeqCst) + 1;
                     last_text = text.clone();
                     let event = ClipboardEvent {
@@ -143,8 +147,10 @@ mod tests {
             content: ClipboardContent::Text("hello".to_string()),
         };
         // Same device: should be filtered
-        assert!(!apply_remote_clipboard(&event, &device_id).unwrap_or(false)
-            || apply_remote_clipboard(&event, &device_id).is_err());
+        assert!(
+            !apply_remote_clipboard(&event, &device_id).unwrap_or(false)
+                || apply_remote_clipboard(&event, &device_id).is_err()
+        );
     }
 
     #[test]

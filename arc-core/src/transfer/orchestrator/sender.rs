@@ -1,22 +1,22 @@
+use futures_util::{SinkExt, StreamExt};
+use serde_json;
 use std::path::Path;
 use std::time::Instant;
-use tokio::sync::mpsc;
-use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use serde_json;
-use uuid::Uuid;
 use tokio::io::AsyncReadExt;
+use tokio::sync::mpsc;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use uuid::Uuid;
 
+use crate::compression::CompressionAlgo;
+use crate::crypto::cipher::CipherSuite;
 use crate::crypto::identity::EphemeralKeyPair;
 use crate::protocol::messages::{ArcMessage, TransferKind};
-use crate::transfer::pipeline::{TransferPipeline, RawChunk};
 use crate::transfer::chunker::AdaptiveChunker;
-use crate::crypto::cipher::CipherSuite;
-use crate::compression::CompressionAlgo;
+use crate::transfer::pipeline::{RawChunk, TransferPipeline};
 
 use super::transport::{
-    send_msg_stream, recv_msg_stream,
-    encrypt_signal, decrypt_signal, WsJoin, WsSignal, WsRelayMessage, HandshakePayload, RateLimiter,
+    HandshakePayload, RateLimiter, WsJoin, WsRelayMessage, WsSignal, decrypt_signal,
+    encrypt_signal, recv_msg_stream, send_msg_stream,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -31,7 +31,7 @@ async fn run_quic_sender_session(
     progress_tx: Option<mpsc::Sender<(u32, u32)>>,
 ) -> Result<(), anyhow::Error> {
     let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
-    use crate::protocol::state::{SessionState, validate_message_for_state, next_state};
+    use crate::protocol::state::{SessionState, next_state, validate_message_for_state};
     let mut current_state = SessionState::Connected;
 
     // 1. Hello exchange
@@ -49,9 +49,17 @@ async fn run_quic_sender_session(
     current_state = next_state(&current_state, &hello_ack).unwrap_or(current_state);
 
     let (peer_device_id, selected_capabilities) = match hello_ack {
-        ArcMessage::HelloAck { protocol_version, device_id, selected_capabilities, .. } => {
+        ArcMessage::HelloAck {
+            protocol_version,
+            device_id,
+            selected_capabilities,
+            ..
+        } => {
             if protocol_version != 1 {
-                return Err(anyhow::anyhow!("Unsupported protocol version: {}", protocol_version));
+                return Err(anyhow::anyhow!(
+                    "Unsupported protocol version: {}",
+                    protocol_version
+                ));
             }
             (device_id, selected_capabilities)
         }
@@ -59,14 +67,24 @@ async fn run_quic_sender_session(
     };
 
     if selected_capabilities.is_empty() {
-        return Err(anyhow::anyhow!("Capability negotiation failed: peer returned empty capabilities"));
+        return Err(anyhow::anyhow!(
+            "Capability negotiation failed: peer returned empty capabilities"
+        ));
     }
 
     use crate::protocol::capability::CapabilityType;
-    let has_zstd = selected_capabilities.iter().any(|c| c.cap_type == CapabilityType::CompressionZstd);
-    let has_lz4 = selected_capabilities.iter().any(|c| c.cap_type == CapabilityType::CompressionLz4);
+    let has_zstd = selected_capabilities
+        .iter()
+        .any(|c| c.cap_type == CapabilityType::CompressionZstd);
+    let has_lz4 = selected_capabilities
+        .iter()
+        .any(|c| c.cap_type == CapabilityType::CompressionLz4);
 
-    if let ArcMessage::TransferOffer { ref mut compression, .. } = offer {
+    if let ArcMessage::TransferOffer {
+        ref mut compression,
+        ..
+    } = offer
+    {
         let negotiated = match *compression {
             crate::compression::CompressionAlgo::Zstd => {
                 if has_zstd {
@@ -88,18 +106,25 @@ async fn run_quic_sender_session(
             }
             crate::compression::CompressionAlgo::None => crate::compression::CompressionAlgo::None,
         };
-        tracing::info!("Negotiated compression: {:?} (proposed: {:?})", negotiated, *compression);
+        tracing::info!(
+            "Negotiated compression: {:?} (proposed: {:?})",
+            negotiated,
+            *compression
+        );
         *compression = negotiated;
     }
 
     if peer_device_id != expected_peer_id {
-        return Err(anyhow::anyhow!("Unexpected peer device ID: expected {}", hex::encode(expected_peer_id)));
+        return Err(anyhow::anyhow!(
+            "Unexpected peer device ID: expected {}",
+            hex::encode(expected_peer_id)
+        ));
     }
 
     // 2. Receive AuthChallenge
     let challenge_msg = recv_msg_stream(&mut recv_stream).await?;
     validate_message_for_state(&challenge_msg, &current_state)?;
-    
+
     let challenge = match challenge_msg {
         ArcMessage::AuthChallenge { challenge } => challenge,
         _ => return Err(anyhow::anyhow!("Expected AuthChallenge")),
@@ -174,9 +199,9 @@ async fn run_quic_sender_session(
                 return;
             }
         };
+        use std::io::SeekFrom;
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncSeekExt;
-        use std::io::SeekFrom;
         let mut buf = vec![0u8; chunk_size];
         let mut index = 0u32;
         loop {
@@ -222,11 +247,15 @@ async fn run_quic_sender_session(
 
             let data = buf[..bytes_read].to_vec();
             let is_last = index + 1 == chunk_count;
-            if pipeline_tx.send(RawChunk {
-                index,
-                data,
-                is_last,
-            }).await.is_err() {
+            if pipeline_tx
+                .send(RawChunk {
+                    index,
+                    data,
+                    is_last,
+                })
+                .await
+                .is_err()
+            {
                 break;
             }
             index += 1;
@@ -300,12 +329,22 @@ async fn run_quic_sender_session(
                 ArcMessage::ChunkNak { retry_count, .. } => {
                     retries += 1;
                     if retries > 5 {
-                        return Err(anyhow::anyhow!("Chunk retransmission limit exceeded (index: {})", ready.index));
+                        return Err(anyhow::anyhow!(
+                            "Chunk retransmission limit exceeded (index: {})",
+                            ready.index
+                        ));
                     }
-                    tracing::warn!(index = ready.index, retry_count, "Received ChunkNak, retransmitting chunk");
+                    tracing::warn!(
+                        index = ready.index,
+                        retry_count,
+                        "Received ChunkNak, retransmitting chunk"
+                    );
                 }
                 ArcMessage::TransferAbort { reason, .. } => {
-                    return Err(anyhow::anyhow!("Transfer aborted by receiver: {:?}", reason));
+                    return Err(anyhow::anyhow!(
+                        "Transfer aborted by receiver: {:?}",
+                        reason
+                    ));
                 }
                 _ => return Err(anyhow::anyhow!("Expected ChunkAck or ChunkNak")),
             }
@@ -341,7 +380,10 @@ async fn run_quic_sender_session(
         _ => return Err(anyhow::anyhow!("Expected Goodbye")),
     }
 
-    println!("File transfer completed successfully over QUIC in {:.2}s!", start_time.elapsed().as_secs_f32());
+    println!(
+        "File transfer completed successfully over QUIC in {:.2}s!",
+        start_time.elapsed().as_secs_f32()
+    );
     Ok(())
 }
 
@@ -366,9 +408,17 @@ async fn run_quic_stdin_sender_session(
 
     let hello_ack = recv_msg_stream(&mut recv_stream).await?;
     let (peer_device_id, selected_capabilities) = match hello_ack {
-        ArcMessage::HelloAck { protocol_version, device_id, selected_capabilities, .. } => {
+        ArcMessage::HelloAck {
+            protocol_version,
+            device_id,
+            selected_capabilities,
+            ..
+        } => {
             if protocol_version != 1 {
-                return Err(anyhow::anyhow!("Unsupported protocol version: {}", protocol_version));
+                return Err(anyhow::anyhow!(
+                    "Unsupported protocol version: {}",
+                    protocol_version
+                ));
             }
             (device_id, selected_capabilities)
         }
@@ -376,11 +426,16 @@ async fn run_quic_stdin_sender_session(
     };
 
     if selected_capabilities.is_empty() {
-        return Err(anyhow::anyhow!("Capability negotiation failed: peer returned empty capabilities"));
+        return Err(anyhow::anyhow!(
+            "Capability negotiation failed: peer returned empty capabilities"
+        ));
     }
 
     if peer_device_id != expected_peer_id {
-        return Err(anyhow::anyhow!("Unexpected peer device ID: expected {}", hex::encode(expected_peer_id)));
+        return Err(anyhow::anyhow!(
+            "Unexpected peer device ID: expected {}",
+            hex::encode(expected_peer_id)
+        ));
     }
 
     // 2. Receive AuthChallenge
@@ -446,18 +501,22 @@ async fn run_quic_stdin_sender_session(
                     // EOF reached
                     if let Some(data) = current_chunk.take() {
                         overall_hasher.update(&data);
-                        let _ = pipeline_tx.send(RawChunk {
-                            index,
-                            data,
-                            is_last: true,
-                        }).await;
+                        let _ = pipeline_tx
+                            .send(RawChunk {
+                                index,
+                                data,
+                                is_last: true,
+                            })
+                            .await;
                     } else {
                         // Empty stream, send an empty last chunk
-                        let _ = pipeline_tx.send(RawChunk {
-                            index,
-                            data: vec![],
-                            is_last: true,
-                        }).await;
+                        let _ = pipeline_tx
+                            .send(RawChunk {
+                                index,
+                                data: vec![],
+                                is_last: true,
+                            })
+                            .await;
                     }
                     break;
                 }
@@ -465,11 +524,13 @@ async fn run_quic_stdin_sender_session(
                     let next_chunk = buffer[..n].to_vec();
                     if let Some(data) = current_chunk.replace(next_chunk) {
                         overall_hasher.update(&data);
-                        let _ = pipeline_tx.send(RawChunk {
-                            index,
-                            data,
-                            is_last: false,
-                        }).await;
+                        let _ = pipeline_tx
+                            .send(RawChunk {
+                                index,
+                                data,
+                                is_last: false,
+                            })
+                            .await;
                         index += 1;
                     }
                 }
@@ -527,7 +588,10 @@ async fn run_quic_stdin_sender_session(
         match ack_msg {
             ArcMessage::ChunkAck { .. } => {}
             ArcMessage::TransferAbort { reason, .. } => {
-                return Err(anyhow::anyhow!("Transfer aborted by receiver: {:?}", reason));
+                return Err(anyhow::anyhow!(
+                    "Transfer aborted by receiver: {:?}",
+                    reason
+                ));
             }
             _ => return Err(anyhow::anyhow!("Expected ChunkAck")),
         }
@@ -559,7 +623,10 @@ async fn run_quic_stdin_sender_session(
         _ => return Err(anyhow::anyhow!("Expected Goodbye")),
     }
 
-    println!("Stdin transfer completed successfully over QUIC in {:.2}s!", start_time.elapsed().as_secs_f32());
+    println!(
+        "Stdin transfer completed successfully over QUIC in {:.2}s!",
+        start_time.elapsed().as_secs_f32()
+    );
     Ok(())
 }
 
@@ -611,7 +678,7 @@ pub async fn run_sender(
     ws_write.send(Message::Text(join_json.into())).await?;
 
     println!("Waiting for receiver to join room...");
-    
+
     // Wait for room to have 2 members or wait for receiver's handshake
     let mut receiver_handshake: Option<HandshakePayload> = None;
     let mut handshake_sent = false;
@@ -636,7 +703,9 @@ pub async fn run_sender(
         if let Message::Text(text) = msg {
             if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
                 match relay_msg {
-                    WsRelayMessage::Joined { member_count: 2, .. } => {
+                    WsRelayMessage::Joined {
+                        member_count: 2, ..
+                    } => {
                         if !handshake_sent {
                             let handshake_bytes = serde_json::to_vec(&handshake_out)?;
                             let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
@@ -669,7 +738,9 @@ pub async fn run_sender(
                     }
                     WsRelayMessage::Signal { data } => {
                         if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                            if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                            if let Ok(payload) =
+                                serde_json::from_slice::<HandshakePayload>(&decrypted)
+                            {
                                 receiver_handshake = Some(payload);
                                 break;
                             }
@@ -681,15 +752,25 @@ pub async fn run_sender(
         }
     }
 
-    let rx_payload = receiver_handshake.ok_or_else(|| anyhow::anyhow!("failed to receive receiver handshake"))?;
+    let rx_payload = receiver_handshake
+        .ok_or_else(|| anyhow::anyhow!("failed to receive receiver handshake"))?;
 
     // Verify signature
     if let Some(ref sig_bytes) = rx_payload.signature {
-        let sig: [u8; 64] = sig_bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
+        let sig: [u8; 64] = sig_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
         let mut sig_input = Vec::with_capacity(64);
         sig_input.extend_from_slice(&rx_payload.nonce);
         sig_input.extend_from_slice(&rx_payload.ephemeral_public);
-        if crate::crypto::identity::DeviceIdentity::verify_peer_signature(&rx_payload.device_id, &sig_input, &sig).is_err() {
+        if crate::crypto::identity::DeviceIdentity::verify_peer_signature(
+            &rx_payload.device_id,
+            &sig_input,
+            &sig,
+        )
+        .is_err()
+        {
             return Err(anyhow::anyhow!("Invalid handshake signature from receiver"));
         }
     } else {
@@ -700,11 +781,16 @@ pub async fn run_sender(
 
     // Perform DH key exchange
     let rx_ephemeral_pub = x25519_dalek::PublicKey::from(rx_payload.ephemeral_public);
-    let session_keys = our_ephemeral.derive_session_keys(&rx_ephemeral_pub, &our_nonce, &rx_payload.nonce);
+    let session_keys =
+        our_ephemeral.derive_session_keys(&rx_ephemeral_pub, &our_nonce, &rx_payload.nonce);
 
     // Save as paired peer if not already
     let mut updated_config = config.clone();
-    if !updated_config.peers.iter().any(|p| p.device_id == rx_payload.device_id) {
+    if !updated_config
+        .peers
+        .iter()
+        .any(|p| p.device_id == rx_payload.device_id)
+    {
         updated_config.peers.push(crate::storage::PeerInfo {
             name: rx_payload.device_name.clone(),
             device_id: rx_payload.device_id,
@@ -719,7 +805,8 @@ pub async fn run_sender(
         let (file, temp_path) = temp_file.into_parts();
         let path_buf = temp_path.to_path_buf();
         let mut archive = tar::Builder::new(file);
-        let dir_name = path.file_name()
+        let dir_name = path
+            .file_name()
             .ok_or_else(|| anyhow::anyhow!("Invalid directory path (no filename)"))?
             .to_string_lossy()
             .to_string();
@@ -744,14 +831,21 @@ pub async fn run_sender(
     };
     let partial_hash = crate::crypto::hash::arc_fast_hash(&offer_path)?;
 
-    let file_name = path.file_name()
+    let file_name = path
+        .file_name()
         .ok_or_else(|| anyhow::anyhow!("Invalid file path (no filename)"))?
         .to_string_lossy()
         .to_string();
     let transfer_id = Uuid::new_v4();
     let offer = ArcMessage::TransferOffer {
         transfer_id: *transfer_id.as_bytes(),
-        kind: if clipboard_mode { TransferKind::Clipboard } else if is_dir { TransferKind::Directory } else { TransferKind::File },
+        kind: if clipboard_mode {
+            TransferKind::Clipboard
+        } else if is_dir {
+            TransferKind::Directory
+        } else {
+            TransferKind::File
+        },
         file_name: file_name.clone(),
         total_size: file_size,
         chunk_count,
@@ -762,7 +856,10 @@ pub async fn run_sender(
     };
 
     println!("Sender: Waiting for incoming QUIC connection over Iroh...");
-    let incoming = endpoint.accept().await.ok_or_else(|| anyhow::anyhow!("Iroh listener closed"))?;
+    let incoming = endpoint
+        .accept()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Iroh listener closed"))?;
     let conn = incoming.await?;
     println!("Sender: QUIC connection established over Iroh.");
 
@@ -775,7 +872,8 @@ pub async fn run_sender(
         rx_payload.device_id,
         None,
         progress_tx.clone(),
-    ).await?;
+    )
+    .await?;
 
     Ok(())
 }
@@ -820,7 +918,7 @@ pub async fn run_stdin_sender(
     ws_write.send(Message::Text(join_json.into())).await?;
 
     println!("Waiting for receiver to join room...");
-    
+
     // Wait for room to have 2 members or wait for receiver's handshake
     let mut receiver_handshake: Option<HandshakePayload> = None;
     let mut handshake_sent = false;
@@ -845,7 +943,9 @@ pub async fn run_stdin_sender(
         if let Message::Text(text) = msg {
             if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
                 match relay_msg {
-                    WsRelayMessage::Joined { member_count: 2, .. } => {
+                    WsRelayMessage::Joined {
+                        member_count: 2, ..
+                    } => {
                         if !handshake_sent {
                             let handshake_bytes = serde_json::to_vec(&handshake_out)?;
                             let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
@@ -878,7 +978,9 @@ pub async fn run_stdin_sender(
                     }
                     WsRelayMessage::Signal { data } => {
                         if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                            if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                            if let Ok(payload) =
+                                serde_json::from_slice::<HandshakePayload>(&decrypted)
+                            {
                                 receiver_handshake = Some(payload);
                                 break;
                             }
@@ -890,15 +992,25 @@ pub async fn run_stdin_sender(
         }
     }
 
-    let rx_payload = receiver_handshake.ok_or_else(|| anyhow::anyhow!("failed to receive receiver handshake"))?;
+    let rx_payload = receiver_handshake
+        .ok_or_else(|| anyhow::anyhow!("failed to receive receiver handshake"))?;
 
     // Verify signature
     if let Some(ref sig_bytes) = rx_payload.signature {
-        let sig: [u8; 64] = sig_bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
+        let sig: [u8; 64] = sig_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
         let mut sig_input = Vec::with_capacity(64);
         sig_input.extend_from_slice(&rx_payload.nonce);
         sig_input.extend_from_slice(&rx_payload.ephemeral_public);
-        if crate::crypto::identity::DeviceIdentity::verify_peer_signature(&rx_payload.device_id, &sig_input, &sig).is_err() {
+        if crate::crypto::identity::DeviceIdentity::verify_peer_signature(
+            &rx_payload.device_id,
+            &sig_input,
+            &sig,
+        )
+        .is_err()
+        {
             return Err(anyhow::anyhow!("Invalid handshake signature from receiver"));
         }
     } else {
@@ -909,11 +1021,16 @@ pub async fn run_stdin_sender(
 
     // Perform DH key exchange
     let rx_ephemeral_pub = x25519_dalek::PublicKey::from(rx_payload.ephemeral_public);
-    let session_keys = our_ephemeral.derive_session_keys(&rx_ephemeral_pub, &our_nonce, &rx_payload.nonce);
+    let session_keys =
+        our_ephemeral.derive_session_keys(&rx_ephemeral_pub, &our_nonce, &rx_payload.nonce);
 
     // Save as paired peer if not already
     let mut updated_config = config.clone();
-    if !updated_config.peers.iter().any(|p| p.device_id == rx_payload.device_id) {
+    if !updated_config
+        .peers
+        .iter()
+        .any(|p| p.device_id == rx_payload.device_id)
+    {
         updated_config.peers.push(crate::storage::PeerInfo {
             name: rx_payload.device_name.clone(),
             device_id: rx_payload.device_id,
@@ -923,7 +1040,11 @@ pub async fn run_stdin_sender(
 
     // Now start the transfer session!
     let transfer_id = Uuid::new_v4();
-    let safe_name = Path::new(name).file_name().unwrap_or_default().to_string_lossy().to_string();
+    let safe_name = Path::new(name)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     let offer = ArcMessage::TransferOffer {
         transfer_id: *transfer_id.as_bytes(),
         kind: TransferKind::Stdin,
@@ -937,7 +1058,10 @@ pub async fn run_stdin_sender(
     };
 
     println!("Sender: Waiting for incoming QUIC connection over Iroh...");
-    let incoming = endpoint.accept().await.ok_or_else(|| anyhow::anyhow!("Iroh listener closed"))?;
+    let incoming = endpoint
+        .accept()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Iroh listener closed"))?;
     let conn = incoming.await?;
     println!("Sender: QUIC connection established over Iroh.");
 
@@ -947,7 +1071,8 @@ pub async fn run_stdin_sender(
         &session_keys,
         rx_payload.device_id,
         progress_tx.clone(),
-    ).await?;
+    )
+    .await?;
 
     Ok(())
 }

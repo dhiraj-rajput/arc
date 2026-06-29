@@ -1,7 +1,7 @@
 //! Adaptive chunker: selects chunk size and parallel stream count based on
 //! machine capacity and file size (§6.3 of master plan).
 
-use crate::compression::{probe_compressibility, CompressionAlgo};
+use crate::compression::{CompressionAlgo, probe_compressibility};
 use crate::crypto::hash::blake3_hash_parallel;
 use crate::machine::MachineCapacity;
 use std::path::Path;
@@ -198,7 +198,10 @@ mod tests {
         let tmp = write_temp(1024);
         let normal = AdaptiveChunker::new(tmp.path(), false).unwrap();
         let saver = AdaptiveChunker::new(tmp.path(), true).unwrap();
-        assert_eq!(saver.config.parallel_streams, 2, "battery saver uses 2 streams");
+        assert_eq!(
+            saver.config.parallel_streams, 2,
+            "battery saver uses 2 streams"
+        );
         // Normal mode uses more streams on a multi-core machine
         let _ = normal;
     }
@@ -216,7 +219,10 @@ mod tests {
         assert!(!chunks.is_empty());
         for chunk in &chunks {
             let expected_hash = blake3_hash_parallel(&chunk.data);
-            assert_eq!(chunk.hash, expected_hash, "chunk hash must match BLAKE3(data)");
+            assert_eq!(
+                chunk.hash, expected_hash,
+                "chunk hash must match BLAKE3(data)"
+            );
         }
     }
 

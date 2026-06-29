@@ -54,10 +54,7 @@ fn test_relay_malformed_message_does_not_panic() {
         rt.block_on(async {
             let (ws_stream, _) = connect_async(&ws_url).await.unwrap();
             let (mut write, _read) = ws_stream.split();
-            write
-                .send(Message::Text("not-json".into()))
-                .await
-                .unwrap();
+            write.send(Message::Text("not-json".into())).await.unwrap();
         });
     });
     handle.join().unwrap();

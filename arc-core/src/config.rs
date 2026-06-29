@@ -96,7 +96,8 @@ fn apply_env_overrides(config: &mut ArcConfig) {
 }
 
 /// Load the identity and merged config (applying environment overrides).
-pub fn get_identity_with_merged_config() -> Result<(crate::crypto::identity::DeviceIdentity, ArcConfig), anyhow::Error> {
+pub fn get_identity_with_merged_config()
+-> Result<(crate::crypto::identity::DeviceIdentity, ArcConfig), anyhow::Error> {
     let (identity, mut config) = crate::storage::get_or_create_identity()?;
     if let Ok(merged) = load_merged_config() {
         config = merged;
@@ -137,4 +138,3 @@ mod tests {
         assert_eq!(tc.mdns_browse_timeout_ms, 500);
     }
 }
-

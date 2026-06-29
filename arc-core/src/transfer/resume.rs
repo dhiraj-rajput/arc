@@ -79,7 +79,11 @@ impl ResumeState {
                 received.insert(idx);
             }
         }
-        Self { total_chunks, file_hash: [0u8; 32], received }
+        Self {
+            total_chunks,
+            file_hash: [0u8; 32],
+            received,
+        }
     }
 
     /// Number of chunks received so far.
@@ -113,17 +117,23 @@ impl ResumeState {
     }
 
     /// Load the resume state from disk if it exists.
-    pub fn load_from_disk(transfer_id: &[u8; 16], expected_file_hash: [u8; 32], total_chunks: u32) -> Result<Self, anyhow::Error> {
+    pub fn load_from_disk(
+        transfer_id: &[u8; 16],
+        expected_file_hash: [u8; 32],
+        total_chunks: u32,
+    ) -> Result<Self, anyhow::Error> {
         let path = get_resume_path(transfer_id);
         let content = std::fs::read_to_string(&path)?;
         let disk_state: DiskResumeState = serde_json::from_str(&content)?;
-        
+
         let file_hash_bytes = hex::decode(&disk_state.file_hash)?;
         if file_hash_bytes != expected_file_hash {
             return Err(anyhow::anyhow!("file hash mismatch for resumed transfer"));
         }
         if disk_state.total_chunks != total_chunks {
-            return Err(anyhow::anyhow!("total chunks mismatch for resumed transfer"));
+            return Err(anyhow::anyhow!(
+                "total chunks mismatch for resumed transfer"
+            ));
         }
 
         let bitmap = hex::decode(&disk_state.bitmap_hex)?;

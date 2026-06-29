@@ -1,11 +1,15 @@
 use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use serde::{Serialize, Deserialize};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
+use crate::clipboard::{
+    ClipboardContent, ClipboardEvent, ClipboardWatcher, apply_remote_clipboard,
+};
 use arc_core::get_identity_with_merged_config;
-use arc_core::transfer::orchestrator::transport::{WsJoin, WsSignal, WsRelayMessage, encrypt_signal, decrypt_signal};
-use crate::clipboard::{ClipboardWatcher, ClipboardEvent, ClipboardContent, apply_remote_clipboard};
+use arc_core::transfer::orchestrator::transport::{
+    WsJoin, WsRelayMessage, WsSignal, decrypt_signal, encrypt_signal,
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ClipboardPayload {
@@ -14,7 +18,10 @@ struct ClipboardPayload {
     text: String,
 }
 
-pub async fn exec_clipboard_sync(phrase: String, relay_override: Option<String>) -> anyhow::Result<()> {
+pub async fn exec_clipboard_sync(
+    phrase: String,
+    relay_override: Option<String>,
+) -> anyhow::Result<()> {
     if !crate::ui::validate_passphrase(&phrase) {
         return Err(anyhow::anyhow!(
             "Invalid passphrase format. Must be 6 hyphen-separated alphabetic words."
@@ -23,14 +30,14 @@ pub async fn exec_clipboard_sync(phrase: String, relay_override: Option<String>)
 
     let (identity, config) = get_identity_with_merged_config()?;
     let relay_url = relay_override.as_deref().unwrap_or(&config.relay_url);
-    
+
     let phrase_seed = arc_core::crypto::derive_key_from_phrase(&phrase);
     let room_id = hex::encode(blake3::hash(&phrase_seed).as_bytes());
-    
+
     println!("Connecting to relay for clipboard synchronization...");
     let (ws_stream, _) = connect_async(relay_url).await?;
     let (mut ws_write, mut ws_read) = ws_stream.split();
-    
+
     // Join room
     let join_req = WsJoin {
         r#type: "join",
@@ -39,16 +46,16 @@ pub async fn exec_clipboard_sync(phrase: String, relay_override: Option<String>)
     };
     let join_json = serde_json::to_string(&join_req)?;
     ws_write.send(Message::Text(join_json.into())).await?;
-    
+
     println!("Joined room. Starting clipboard sync daemon...");
     println!("Monitoring clipboard... Press Ctrl+C to stop.");
-    
+
     let device_id = identity.device_id();
     let watcher = ClipboardWatcher::new(device_id, 500);
     let mut local_rx = watcher.start();
-    
+
     let (tx_out, mut rx_out) = mpsc::channel::<String>(16);
-    
+
     // Task to forward local clipboard updates to the WebSocket stream
     let room_id_clone = room_id.clone();
     tokio::spawn(async move {
@@ -119,7 +126,7 @@ pub async fn exec_clipboard_sync(phrase: String, relay_override: Option<String>)
             }
         }
     }
-    
+
     watcher.stop();
     Ok(())
 }

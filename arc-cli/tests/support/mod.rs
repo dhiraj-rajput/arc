@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -53,20 +55,14 @@ impl TestEnv {
 
     pub fn arc_cmd(&self) -> AssertCommand {
         let mut cmd = AssertCommand::cargo_bin("arc").expect("arc binary");
-        cmd.env(
-            arc_core::storage::ENV_CONFIG_DIR,
-            self.config_dir.path(),
-        )
-        .env("ARC_KEYRING_SUFFIX", &self.keyring_suffix);
+        cmd.env(arc_core::storage::ENV_CONFIG_DIR, self.config_dir.path())
+            .env("ARC_KEYRING_SUFFIX", &self.keyring_suffix);
         cmd
     }
 
     pub fn apply_to(&self, cmd: &mut Command) {
-        cmd.env(
-            arc_core::storage::ENV_CONFIG_DIR,
-            self.config_dir.path(),
-        )
-        .env("ARC_KEYRING_SUFFIX", &self.keyring_suffix);
+        cmd.env(arc_core::storage::ENV_CONFIG_DIR, self.config_dir.path())
+            .env("ARC_KEYRING_SUFFIX", &self.keyring_suffix);
     }
 }
 
@@ -120,17 +116,22 @@ impl InProcessRelay {
                         while let Some(Ok(msg)) = ws_read.next().await {
                             match msg {
                                 Message::Text(text) => {
-                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                                    if let Ok(val) =
+                                        serde_json::from_str::<serde_json::Value>(&text)
+                                    {
                                         let msg_type = val["type"].as_str().unwrap_or_default();
                                         if msg_type == "join" {
-                                            let room_id =
-                                                val["room_id"].as_str().unwrap_or_default().to_string();
+                                            let room_id = val["room_id"]
+                                                .as_str()
+                                                .unwrap_or_default()
+                                                .to_string();
                                             let max_members =
                                                 val["max_members"].as_u64().unwrap_or(2) as usize;
                                             let (joined_msg, member_msg, senders, rejected) = {
                                                 let mut r = rooms.lock().unwrap();
-                                                let connections =
-                                                    r.entry(room_id.clone()).or_insert_with(Vec::new);
+                                                let connections = r
+                                                    .entry(room_id.clone())
+                                                    .or_insert_with(Vec::new);
                                                 if connections.len() >= max_members {
                                                     (String::new(), String::new(), Vec::new(), true)
                                                 } else {
@@ -152,7 +153,10 @@ impl InProcessRelay {
                                                     })
                                                     .to_string();
                                                     let senders: Vec<mpsc::Sender<Message>> =
-                                                        connections.iter().map(|c| c.tx.clone()).collect();
+                                                        connections
+                                                            .iter()
+                                                            .map(|c| c.tx.clone())
+                                                            .collect();
                                                     (joined, member, senders, false)
                                                 }
                                             };
@@ -161,13 +165,19 @@ impl InProcessRelay {
                                             }
                                             let _ = tx.send(Message::Text(joined_msg.into())).await;
                                             for sender in senders {
-                                                let _ = sender.send(Message::Text(member_msg.clone().into())).await;
+                                                let _ = sender
+                                                    .send(Message::Text(member_msg.clone().into()))
+                                                    .await;
                                             }
                                         } else if msg_type == "signal" {
-                                            let room_id =
-                                                val["room_id"].as_str().unwrap_or_default().to_string();
-                                            let data =
-                                                val["data"].as_str().unwrap_or_default().to_string();
+                                            let room_id = val["room_id"]
+                                                .as_str()
+                                                .unwrap_or_default()
+                                                .to_string();
+                                            let data = val["data"]
+                                                .as_str()
+                                                .unwrap_or_default()
+                                                .to_string();
                                             let senders = {
                                                 let r = rooms.lock().unwrap();
                                                 r.get(&room_id)
@@ -186,7 +196,9 @@ impl InProcessRelay {
                                             })
                                             .to_string();
                                             for sender in senders {
-                                                let _ = sender.send(Message::Text(signal_msg.clone().into())).await;
+                                                let _ = sender
+                                                    .send(Message::Text(signal_msg.clone().into()))
+                                                    .await;
                                             }
                                         }
                                     }

@@ -89,8 +89,12 @@ pub fn arc_fast_hash(path: &Path) -> io::Result<[u8; 32]> {
 /// and returns the BLAKE3 hash of the concatenated individual file hashes.
 pub fn blake3_hash_dir(dir: &Path) -> io::Result<[u8; 32]> {
     let mut file_entries = Vec::new();
-    
-    fn visit_dirs(dir: &Path, base: &Path, entries: &mut Vec<(String, [u8; 32])>) -> io::Result<()> {
+
+    fn visit_dirs(
+        dir: &Path,
+        base: &Path,
+        entries: &mut Vec<(String, [u8; 32])>,
+    ) -> io::Result<()> {
         if dir.is_dir() {
             for entry in std::fs::read_dir(dir)? {
                 let entry = entry?;
@@ -98,7 +102,8 @@ pub fn blake3_hash_dir(dir: &Path) -> io::Result<[u8; 32]> {
                 if path.is_dir() {
                     visit_dirs(&path, base, entries)?;
                 } else {
-                    let rel_path = path.strip_prefix(base)
+                    let rel_path = path
+                        .strip_prefix(base)
                         .unwrap_or(&path)
                         .to_string_lossy()
                         .to_string();
@@ -109,17 +114,17 @@ pub fn blake3_hash_dir(dir: &Path) -> io::Result<[u8; 32]> {
         }
         Ok(())
     }
-    
+
     visit_dirs(dir, dir, &mut file_entries)?;
     // Sort by relative path to ensure deterministic order
     file_entries.sort_by(|a, b| a.0.cmp(&b.0));
-    
+
     // Concat all hashes
     let mut concat = Vec::with_capacity(file_entries.len() * 32);
     for (_, hash) in file_entries {
         concat.extend_from_slice(&hash);
     }
-    
+
     Ok(*blake3::hash(&concat).as_bytes())
 }
 
@@ -296,8 +301,8 @@ impl MerkleTree {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_blake3_parallel_consistency() {
@@ -403,22 +408,30 @@ mod tests {
         for i in 0..4 {
             let chunk = &data[i * 256..(i + 1) * 256];
             let proof = tree.proof(i);
-            
+
             // Verify using direct method
             assert!(tree.verify_chunk(i, chunk));
-            
+
             // Verify using proof method
             assert!(MerkleTree::verify_with_proof(&root, i, 4, chunk, &proof));
 
             // Verify with bad chunk fails
             let mut bad_chunk = chunk.to_vec();
             bad_chunk[0] ^= 0xFF;
-            assert!(!MerkleTree::verify_with_proof(&root, i, 4, &bad_chunk, &proof));
+            assert!(!MerkleTree::verify_with_proof(
+                &root, i, 4, &bad_chunk, &proof
+            ));
 
             // Verify with truncated/invalid proof length fails
             if !proof.is_empty() {
                 let truncated_proof = &proof[..proof.len() - 1];
-                assert!(!MerkleTree::verify_with_proof(&root, i, 4, chunk, truncated_proof));
+                assert!(!MerkleTree::verify_with_proof(
+                    &root,
+                    i,
+                    4,
+                    chunk,
+                    truncated_proof
+                ));
             }
         }
 
@@ -429,24 +442,24 @@ mod tests {
 
     #[test]
     fn test_blake3_hash_dir_deterministic() {
-        use tempfile::tempdir;
         use std::fs::File;
         use std::io::Write;
-        
+        use tempfile::tempdir;
+
         let dir = tempdir().unwrap();
         let file_path1 = dir.path().join("a.txt");
         let file_path2 = dir.path().join("b.txt");
-        
+
         let mut f1 = File::create(&file_path1).unwrap();
         f1.write_all(b"content a").unwrap();
-        
+
         let mut f2 = File::create(&file_path2).unwrap();
         f2.write_all(b"content b").unwrap();
-        
+
         let hash1 = blake3_hash_dir(dir.path()).unwrap();
         let hash2 = blake3_hash_dir(dir.path()).unwrap();
         assert_eq!(hash1, hash2, "hashing same directory must be deterministic");
-        
+
         // Changing content must change hash
         let mut f1_mod = File::create(&file_path1).unwrap();
         f1_mod.write_all(b"content a changed").unwrap();

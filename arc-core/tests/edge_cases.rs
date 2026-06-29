@@ -90,7 +90,10 @@ async fn test_resume_bitmap_roundtrip() {
 
     let bitmap = state.to_bitmap();
     let restored = ResumeState::from_bitmap(&bitmap, 16);
-    assert_eq!(restored.missing_chunks(), vec![1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    assert_eq!(
+        restored.missing_chunks(),
+        vec![1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    );
     assert!(!restored.is_complete());
 
     for i in 0..16 {

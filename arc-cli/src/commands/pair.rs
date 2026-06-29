@@ -1,6 +1,6 @@
-use arc_core::get_identity_with_merged_config;
-use arc_core::transfer::orchestrator::{run_pairing_sender, run_pairing_receiver};
 use crate::ui::generate_phrase;
+use arc_core::get_identity_with_merged_config;
+use arc_core::transfer::orchestrator::{run_pairing_receiver, run_pairing_sender};
 
 pub async fn exec_pair(
     name: Option<String>,
@@ -12,13 +12,16 @@ pub async fn exec_pair(
     let (_, config) = get_identity_with_merged_config()?;
     let relay_url = relay_override.as_deref().unwrap_or(&config.relay_url);
     let display_name = name.unwrap_or_else(|| config.device_name.clone());
-    
+
     let is_initiator = if initiator {
         true
     } else if joiner.is_some() {
         false
     } else {
-        let selections = &["1) Initiator (Show pairing code)", "2) Joiner (Enter pairing code)"];
+        let selections = &[
+            "1) Initiator (Show pairing code)",
+            "2) Joiner (Enter pairing code)",
+        ];
         let selection = dialoguer::Select::with_theme(&dialoguer::theme::SimpleTheme)
             .with_prompt("Choose pairing role")
             .items(selections)
@@ -47,7 +50,10 @@ pub async fn exec_pair(
         }
 
         run_pairing_sender(&pairing_code, relay_url, &display_name).await?;
-        println!("\n🎉 Pairing completed successfully! Device '{}' is now authorized.", display_name);
+        println!(
+            "\n🎉 Pairing completed successfully! Device '{}' is now authorized.",
+            display_name
+        );
     } else {
         let code = if let Some(code_val) = joiner {
             code_val
@@ -62,7 +68,10 @@ pub async fn exec_pair(
         println!("Connecting to relay and authenticating identity keys...");
 
         run_pairing_receiver(&code, relay_url, &display_name).await?;
-        println!("\n🎉 Pairing completed successfully! Device '{}' is now authorized.", display_name);
+        println!(
+            "\n🎉 Pairing completed successfully! Device '{}' is now authorized.",
+            display_name
+        );
     }
     Ok(())
 }

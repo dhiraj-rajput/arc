@@ -79,9 +79,9 @@ pub fn probe_compressibility(sample: &[u8]) -> CompressibilityResult {
     let ratio = probe.len() as f32 / compressed.len() as f32;
 
     let algorithm = match ratio {
-        r if r < 1.05 => CompressionAlgo::None,  // pre-compressed: skip
-        r if r > 1.30 => CompressionAlgo::Zstd,  // significant gain: use zstd
-        _ => CompressionAlgo::Lz4,                // marginal: use lz4 (faster)
+        r if r < 1.05 => CompressionAlgo::None, // pre-compressed: skip
+        r if r > 1.30 => CompressionAlgo::Zstd, // significant gain: use zstd
+        _ => CompressionAlgo::Lz4,              // marginal: use lz4 (faster)
     };
 
     CompressibilityResult { algorithm, ratio }
@@ -90,7 +90,11 @@ pub fn probe_compressibility(sample: &[u8]) -> CompressibilityResult {
 /// Compress data with the specified algorithm.
 ///
 /// `level` is only used for `Zstd` (1–22; level 3 is the recommended default).
-pub fn compress(data: &[u8], algo: CompressionAlgo, level: i32) -> Result<Vec<u8>, CompressionError> {
+pub fn compress(
+    data: &[u8],
+    algo: CompressionAlgo,
+    level: i32,
+) -> Result<Vec<u8>, CompressionError> {
     match algo {
         CompressionAlgo::None => Ok(data.to_vec()),
         CompressionAlgo::Zstd => {
@@ -98,9 +102,7 @@ pub fn compress(data: &[u8], algo: CompressionAlgo, level: i32) -> Result<Vec<u8
             zstd::bulk::compress(data, clamped_level)
                 .map_err(|e| CompressionError::CompressFailed(e.to_string()))
         }
-        CompressionAlgo::Lz4 => {
-            Ok(lz4_flex::compress_prepend_size(data))
-        }
+        CompressionAlgo::Lz4 => Ok(lz4_flex::compress_prepend_size(data)),
     }
 }
 
@@ -110,25 +112,33 @@ pub fn decompress(data: &[u8], algo: CompressionAlgo) -> Result<Vec<u8>, Compres
 }
 
 /// Decompress data with a specified output size limit.
-pub fn decompress_with_limit(data: &[u8], algo: CompressionAlgo, max_size: usize) -> Result<Vec<u8>, CompressionError> {
+pub fn decompress_with_limit(
+    data: &[u8],
+    algo: CompressionAlgo,
+    max_size: usize,
+) -> Result<Vec<u8>, CompressionError> {
     match algo {
         CompressionAlgo::None => {
             if data.len() > max_size {
-                return Err(CompressionError::DecompressFailed("decompressed size limit exceeded".to_string()));
+                return Err(CompressionError::DecompressFailed(
+                    "decompressed size limit exceeded".to_string(),
+                ));
             }
             Ok(data.to_vec())
         }
-        CompressionAlgo::Zstd => {
-            zstd::bulk::decompress(data, max_size)
-                .map_err(|e| CompressionError::DecompressFailed(e.to_string()))
-        }
+        CompressionAlgo::Zstd => zstd::bulk::decompress(data, max_size)
+            .map_err(|e| CompressionError::DecompressFailed(e.to_string())),
         CompressionAlgo::Lz4 => {
             if data.len() < 4 {
-                return Err(CompressionError::DecompressFailed("invalid compressed data".to_string()));
+                return Err(CompressionError::DecompressFailed(
+                    "invalid compressed data".to_string(),
+                ));
             }
             let uncompressed_size = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
             if uncompressed_size > max_size {
-                return Err(CompressionError::DecompressFailed("decompressed size limit exceeded".to_string()));
+                return Err(CompressionError::DecompressFailed(
+                    "decompressed size limit exceeded".to_string(),
+                ));
             }
             let decompressed = lz4_flex::decompress_size_prepended(data)
                 .map_err(|e| CompressionError::DecompressFailed(e.to_string()))?;
@@ -149,7 +159,10 @@ mod tests {
         let decompressed = decompress(&compressed, CompressionAlgo::Zstd).expect("zstd decompress");
         assert_eq!(decompressed, data);
         // Text should compress
-        assert!(compressed.len() < data.len(), "text should be smaller after zstd");
+        assert!(
+            compressed.len() < data.len(),
+            "text should be smaller after zstd"
+        );
     }
 
     #[test]
@@ -209,9 +222,15 @@ mod tests {
     #[test]
     fn test_roundtrip_all_algorithms() {
         let data = b"test data for all algorithm roundtrips";
-        for algo in [CompressionAlgo::None, CompressionAlgo::Zstd, CompressionAlgo::Lz4] {
-            let compressed = compress(data, algo, 3).unwrap_or_else(|e| panic!("{algo:?} compress failed: {e}"));
-            let decompressed = decompress(&compressed, algo).unwrap_or_else(|e| panic!("{algo:?} decompress failed: {e}"));
+        for algo in [
+            CompressionAlgo::None,
+            CompressionAlgo::Zstd,
+            CompressionAlgo::Lz4,
+        ] {
+            let compressed =
+                compress(data, algo, 3).unwrap_or_else(|e| panic!("{algo:?} compress failed: {e}"));
+            let decompressed = decompress(&compressed, algo)
+                .unwrap_or_else(|e| panic!("{algo:?} decompress failed: {e}"));
             assert_eq!(decompressed.as_slice(), data, "{algo:?} roundtrip failed");
         }
     }
@@ -237,6 +256,3 @@ mod tests {
         assert!(decompress_with_limit(&[0u8; 3], CompressionAlgo::Lz4, 100).is_err());
     }
 }
-
-
-
