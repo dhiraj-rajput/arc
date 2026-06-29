@@ -35,13 +35,11 @@ pub use storage::{
 pub async fn connect_relay(
     url_str: &str,
 ) -> Result<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     anyhow::Error,
 > {
     use std::sync::Arc;
-    use tokio_tungstenite::{connect_async, connect_async_tls_with_config, Connector};
+    use tokio_tungstenite::{Connector, connect_async, connect_async_tls_with_config};
     use url::Url;
 
     let url = Url::parse(url_str)?;
@@ -59,13 +57,8 @@ pub async fn connect_relay(
         config.enable_sni = false;
 
         let connector = Connector::Rustls(Arc::new(config));
-        let (ws_stream, _) = connect_async_tls_with_config(
-            url_str,
-            None,
-            false,
-            Some(connector),
-        )
-        .await?;
+        let (ws_stream, _) =
+            connect_async_tls_with_config(url_str, None, false, Some(connector)).await?;
         Ok(ws_stream)
     } else {
         let (ws_stream, _) = connect_async(url_str).await?;
