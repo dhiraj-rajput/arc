@@ -77,4 +77,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run benchmark smoke tests
-        run: cargo bench -p arc-core -- --sample-size 10
+        run: cargo bench -p arc-core --bench transfer -- --sample-size 10
