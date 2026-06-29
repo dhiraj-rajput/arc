@@ -15,7 +15,11 @@ async fn relay_ws_url() -> String {
 async fn join_room(
     ws_url: &str,
     room_id: &str,
-) -> Option<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>> {
+) -> Option<
+    tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+> {
     let (mut ws_stream, _) = connect_async(ws_url).await.unwrap();
     let join_msg = serde_json::json!({
         "type": "join",

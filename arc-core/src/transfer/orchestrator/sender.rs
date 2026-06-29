@@ -1,7 +1,7 @@
 use futures_util::{SinkExt, StreamExt};
 use serde_json;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};

@@ -40,7 +40,7 @@ impl InProcessRelay {
                     if let Ok(ws_stream) = accept_async(stream).await {
                         let (mut ws_write, mut ws_read) = ws_stream.split();
                         let (tx, mut rx) = mpsc::channel::<String>(32);
-                        let mut current_room: Option<String> = None;
+
                         let client_id = {
                             let mut id_guard = next_client_id.lock().unwrap();
                             let id = *id_guard;
@@ -102,7 +102,7 @@ impl InProcessRelay {
                                         let _ = tx.send(error_msg).await;
                                         break;
                                     }
-                                    current_room = Some(room_id);
+
                                     let _ = tx.send(joined_msg).await;
                                     for sender in senders {
                                         let _ = sender.send(member_msg.clone()).await;
