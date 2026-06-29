@@ -161,6 +161,13 @@ impl InProcessRelay {
                                                 }
                                             };
                                             if rejected {
+                                                let error_msg = serde_json::json!({
+                                                    "type": "error",
+                                                    "message": "Room is full"
+                                                })
+                                                .to_string();
+                                                let _ = tx.send(Message::Text(error_msg.into())).await;
+                                                let _ = tx.send(Message::Close(None)).await;
                                                 continue;
                                             }
                                             let _ = tx.send(Message::Text(joined_msg.into())).await;

@@ -32,8 +32,13 @@ async fn test_integration_pairing() {
 
     assert_eq!(receiver_name, "sender-device");
 
-    let (identity_sender, _) = arc_core::storage::get_or_create_identity().unwrap();
-    assert_eq!(peer_id_from_receiver, identity_sender.device_id());
+    let expected_device_id = arc_core::storage::TEST_IDENTITY
+        .scope([0u8; 32], async {
+            let (identity_sender, _) = arc_core::storage::get_or_create_identity().unwrap();
+            identity_sender.device_id()
+        })
+        .await;
+    assert_eq!(peer_id_from_receiver, expected_device_id);
 }
 
 #[tokio::test]
