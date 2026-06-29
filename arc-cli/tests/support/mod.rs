@@ -167,8 +167,7 @@ impl InProcessRelay {
                                                 })
                                                 .to_string();
                                                 let _ = tx.send(Message::Text(error_msg.into())).await;
-                                                let _ = tx.send(Message::Close(None)).await;
-                                                continue;
+                                                break;
                                             }
                                             let _ = tx.send(Message::Text(joined_msg.into())).await;
                                             for sender in senders {

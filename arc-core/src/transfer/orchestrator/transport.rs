@@ -297,6 +297,9 @@ pub async fn run_pairing_receiver(
                         room_ready = true;
                         break;
                     }
+                    WsRelayMessage::Error { message } => {
+                        return Err(anyhow::anyhow!("Relay error: {}", message));
+                    }
                     _ => {}
                 }
             }
