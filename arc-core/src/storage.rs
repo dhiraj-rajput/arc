@@ -434,9 +434,13 @@ pub fn get_transfer_history() -> Result<Vec<TransferHistoryEntry>, anyhow::Error
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_sqlite_db_init_and_peers() {
+        let _lock = TEST_LOCK.lock().unwrap();
         let _conn = get_db_conn().expect("failed to connect to test db");
 
         let peer = PeerInfo {
@@ -470,6 +474,7 @@ mod tests {
 
     #[test]
     fn test_arc_config_dir_override() {
+        let _lock = TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         unsafe {
             std::env::set_var(ENV_CONFIG_DIR, temp.path());
@@ -497,6 +502,7 @@ mod tests {
 
     #[test]
     fn test_sqlite_transfer_history() {
+        let _lock = TEST_LOCK.lock().unwrap();
         let entry = TransferHistoryEntry {
             transfer_id: [0xAA; 16],
             kind: "File".to_string(),
