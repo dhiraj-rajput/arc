@@ -452,6 +452,8 @@ async fn run_quic_receiver_session(
 
                 let goodbye = ArcMessage::Goodbye { reason: None };
                 send_msg_stream(&mut send_stream, &goodbye).await?;
+                use tokio::io::AsyncWriteExt;
+                let _ = send_stream.shutdown().await;
                 return Ok(clipboard_content);
             }
             ArcMessage::TransferAbort { reason, .. } => {

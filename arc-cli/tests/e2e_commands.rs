@@ -446,10 +446,9 @@ fn test_cross_flow_pair_peers_send() {
     let dest = receiver_env.config_dir.path().join("downloads");
     fs::create_dir_all(&dest).unwrap();
     let dest_for_receiver = dest.clone();
-
     let phrase = PHRASE;
     let mut rx_cmd_2 = receiver_env.arc_cmd();
-    let receiver = thread::spawn(move || {
+    let receiver_handle = thread::spawn(move || {
         rx_cmd_2
             .args([
                 "receive",
@@ -458,12 +457,11 @@ fn test_cross_flow_pair_peers_send() {
                 dest_for_receiver.to_str().unwrap(),
             ])
             .timeout(Duration::from_secs(120))
-            .assert()
-            .success();
+            .output()
     });
     thread::sleep(Duration::from_millis(500));
 
-    sender_env
+    let sender_res = sender_env
         .arc_cmd()
         .args([
             "send",
@@ -474,10 +472,26 @@ fn test_cross_flow_pair_peers_send() {
             phrase,
         ])
         .timeout(Duration::from_secs(120))
-        .assert()
-        .success();
+        .output();
 
-    receiver.join().unwrap();
+    let receiver_res = receiver_handle.join().unwrap();
+
+    let sender_output = sender_res.unwrap();
+    let receiver_output = receiver_res.unwrap();
+
+    println!("--- SENDER STDOUT ---");
+    println!("{}", String::from_utf8_lossy(&sender_output.stdout));
+    println!("--- SENDER STDERR ---");
+    println!("{}", String::from_utf8_lossy(&sender_output.stderr));
+
+    println!("--- RECEIVER STDOUT ---");
+    println!("{}", String::from_utf8_lossy(&receiver_output.stdout));
+    println!("--- RECEIVER STDERR ---");
+    println!("{}", String::from_utf8_lossy(&receiver_output.stderr));
+
+    assert!(sender_output.status.success(), "sender failed");
+    assert!(receiver_output.status.success(), "receiver failed");
+
     assert_eq!(fs::read(dest.join("note.txt")).unwrap(), b"paired-send");
 }
 
