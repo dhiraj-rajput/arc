@@ -53,6 +53,9 @@ pub async fn connect_relay(
             .with_root_certificates(root_store)
             .with_no_client_auth();
 
+        // Disable SNI to prevent "received fatal alert: UnrecognisedName"
+        config.enable_sni = false;
+
         let connector = Connector::Rustls(Arc::new(config));
         let (ws_stream, _) =
             connect_async_tls_with_config(url_str, None, false, Some(connector)).await?;
