@@ -94,7 +94,13 @@ impl InProcessRelay {
                                         }
                                     };
                                     if rejected {
-                                        continue;
+                                        let error_msg = serde_json::json!({
+                                            "type": "error",
+                                            "message": "Room is full"
+                                        })
+                                        .to_string();
+                                        let _ = tx.send(error_msg).await;
+                                        break;
                                     }
                                     current_room = Some(room_id);
                                     let _ = tx.send(joined_msg).await;
@@ -128,8 +134,14 @@ impl InProcessRelay {
                                 }
                             }
                         }
+                        {
+                            let mut r = rooms.lock().unwrap();
+                            for connections in r.values_mut() {
+                                connections.retain(|c| c.id != client_id);
+                            }
+                            r.retain(|_, v| !v.is_empty());
+                        }
                         ws_writer_task.abort();
-                        let _ = current_room;
                     }
                 });
             }

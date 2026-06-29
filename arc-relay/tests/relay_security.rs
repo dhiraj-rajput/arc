@@ -12,27 +12,31 @@ async fn relay_ws_url() -> String {
     relay_url(relay.start("127.0.0.1:0").await)
 }
 
-async fn join_room(ws_url: &str, room_id: &str) -> bool {
-    let (ws_stream, _) = connect_async(ws_url).await.unwrap();
-    let (mut write, mut read) = ws_stream.split();
+async fn join_room(
+    ws_url: &str,
+    room_id: &str,
+) -> Option<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>> {
+    let (mut ws_stream, _) = connect_async(ws_url).await.unwrap();
     let join_msg = serde_json::json!({
         "type": "join",
         "room_id": room_id,
         "max_members": 2
     });
-    write
+    ws_stream
         .send(Message::Text(join_msg.to_string().into()))
         .await
         .unwrap();
-    while let Some(Ok(Message::Text(text))) = read.next().await {
-        if text.contains("joined") || text.contains("member_count") {
-            return true;
-        }
-        if text.contains("full") || text.contains("error") {
-            return false;
+    while let Some(msg_res) = ws_stream.next().await {
+        if let Ok(Message::Text(text)) = msg_res {
+            if text.contains("joined") || text.contains("member_count") {
+                return Some(ws_stream);
+            }
+            if text.contains("full") || text.contains("error") {
+                return None;
+            }
         }
     }
-    false
+    None
 }
 
 #[tokio::test]
@@ -40,9 +44,14 @@ async fn test_relay_rejects_third_member() {
     let ws_url = relay_ws_url().await;
     let room_id = "a".repeat(64);
 
-    assert!(join_room(&ws_url, &room_id).await);
-    assert!(join_room(&ws_url, &room_id).await);
-    assert!(!join_room(&ws_url, &room_id).await);
+    let client1 = join_room(&ws_url, &room_id).await;
+    assert!(client1.is_some());
+
+    let client2 = join_room(&ws_url, &room_id).await;
+    assert!(client2.is_some());
+
+    let client3 = join_room(&ws_url, &room_id).await;
+    assert!(client3.is_none());
 }
 
 #[test]
