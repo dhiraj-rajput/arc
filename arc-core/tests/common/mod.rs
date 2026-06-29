@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 
 struct Client {
     id: usize,
-    tx: mpsc::Sender<String>,
+    tx: mpsc::Sender<Message>,
 }
 
 /// Minimal WebSocket relay matching arc-core signaling expectations.
@@ -47,7 +47,7 @@ impl InProcessRelay {
                 tokio::spawn(async move {
                     if let Ok(ws_stream) = accept_async(stream).await {
                         let (mut ws_write, mut ws_read) = ws_stream.split();
-                        let (tx, mut rx) = mpsc::channel::<String>(32);
+                        let (tx, mut rx) = mpsc::channel::<Message>(32);
                         let mut current_room: Option<String> = None;
 
                         let client_id = {
@@ -59,97 +59,105 @@ impl InProcessRelay {
 
                         let ws_writer_task = tokio::spawn(async move {
                             while let Some(msg) = rx.recv().await {
-                                if ws_write.send(Message::Text(msg.into())).await.is_err() {
+                                if ws_write.send(msg).await.is_err() {
                                     break;
                                 }
                             }
                         });
 
-                        while let Some(Ok(Message::Text(text))) = ws_read.next().await {
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                                let msg_type = val["type"].as_str().unwrap_or_default();
-                                if msg_type == "join" {
-                                    let room_id =
-                                        val["room_id"].as_str().unwrap_or_default().to_string();
-                                    let requested_max =
-                                        val["max_members"].as_u64().unwrap_or(max_members as u64)
-                                            as usize;
-                                    let effective_max = requested_max.min(max_members);
+                        while let Some(Ok(msg)) = ws_read.next().await {
+                            match msg {
+                                Message::Text(text) => {
+                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                                        let msg_type = val["type"].as_str().unwrap_or_default();
+                                        if msg_type == "join" {
+                                            let room_id =
+                                                val["room_id"].as_str().unwrap_or_default().to_string();
+                                            let requested_max =
+                                                val["max_members"].as_u64().unwrap_or(max_members as u64)
+                                                    as usize;
+                                            let effective_max = requested_max.min(max_members);
 
-                                    let (joined_msg, member_msg, senders, rejected) = {
-                                        let mut r = rooms.lock().unwrap();
-                                        let connections =
-                                            r.entry(room_id.clone()).or_insert_with(Vec::new);
-                                        if connections.len() >= effective_max {
-                                            (String::new(), String::new(), Vec::new(), true)
-                                        } else {
-                                            connections.push(Client {
-                                                id: client_id,
-                                                tx: tx.clone(),
-                                            });
-                                            let count = connections.len();
-                                            let joined = serde_json::json!({
-                                                "type": "joined",
-                                                "room_id": room_id,
-                                                "member_count": count
+                                            let (joined_msg, member_msg, senders, rejected) = {
+                                                let mut r = rooms.lock().unwrap();
+                                                let connections =
+                                                    r.entry(room_id.clone()).or_insert_with(Vec::new);
+                                                if connections.len() >= effective_max {
+                                                    (String::new(), String::new(), Vec::new(), true)
+                                                } else {
+                                                    connections.push(Client {
+                                                        id: client_id,
+                                                        tx: tx.clone(),
+                                                    });
+                                                    let count = connections.len();
+                                                    let joined = serde_json::json!({
+                                                        "type": "joined",
+                                                        "room_id": room_id,
+                                                        "member_count": count
+                                                    })
+                                                    .to_string();
+                                                    let member = serde_json::json!({
+                                                        "type": "room_member_count",
+                                                        "room_id": room_id,
+                                                        "count": count
+                                                    })
+                                                    .to_string();
+                                                    let senders: Vec<mpsc::Sender<Message>> =
+                                                        connections.iter().map(|c| c.tx.clone()).collect();
+                                                    (joined, member, senders, false)
+                                                }
+                                            };
+
+                                            if rejected {
+                                                let err = serde_json::json!({
+                                                    "type": "error",
+                                                    "message": format!("room is full (max {} members)", effective_max)
+                                                })
+                                                .to_string();
+                                                let _ = tx.send(Message::Text(err.into())).await;
+                                                continue;
+                                            }
+
+                                            current_room = Some(room_id.clone());
+                                            let _ = tx.send(Message::Text(joined_msg.into())).await;
+                                            for sender in senders {
+                                                let _ = sender.send(Message::Text(member_msg.clone().into())).await;
+                                            }
+                                        } else if msg_type == "signal" {
+                                            let room_id =
+                                                val["room_id"].as_str().unwrap_or_default().to_string();
+                                            let data =
+                                                val["data"].as_str().unwrap_or_default().to_string();
+
+                                            let senders = {
+                                                let r = rooms.lock().unwrap();
+                                                if let Some(connections) = r.get(&room_id) {
+                                                    connections
+                                                        .iter()
+                                                        .filter(|c| c.id != client_id)
+                                                        .map(|c| c.tx.clone())
+                                                        .collect::<Vec<_>>()
+                                                } else {
+                                                    Vec::new()
+                                                }
+                                            };
+
+                                            let signal_msg = serde_json::json!({
+                                                "type": "signal",
+                                                "data": data
                                             })
                                             .to_string();
-                                            let member = serde_json::json!({
-                                                "type": "room_member_count",
-                                                "room_id": room_id,
-                                                "count": count
-                                            })
-                                            .to_string();
-                                            let senders: Vec<mpsc::Sender<String>> =
-                                                connections.iter().map(|c| c.tx.clone()).collect();
-                                            (joined, member, senders, false)
+
+                                            for sender in senders {
+                                                let _ = sender.send(Message::Text(signal_msg.clone().into())).await;
+                                            }
                                         }
-                                    };
-
-                                    if rejected {
-                                        let err = serde_json::json!({
-                                            "type": "error",
-                                            "message": format!("room is full (max {} members)", effective_max)
-                                        })
-                                        .to_string();
-                                        let _ = tx.send(err).await;
-                                        continue;
-                                    }
-
-                                    current_room = Some(room_id.clone());
-                                    let _ = tx.send(joined_msg).await;
-                                    for sender in senders {
-                                        let _ = sender.send(member_msg.clone()).await;
-                                    }
-                                } else if msg_type == "signal" {
-                                    let room_id =
-                                        val["room_id"].as_str().unwrap_or_default().to_string();
-                                    let data =
-                                        val["data"].as_str().unwrap_or_default().to_string();
-
-                                    let senders = {
-                                        let r = rooms.lock().unwrap();
-                                        if let Some(connections) = r.get(&room_id) {
-                                            connections
-                                                .iter()
-                                                .filter(|c| c.id != client_id)
-                                                .map(|c| c.tx.clone())
-                                                .collect::<Vec<_>>()
-                                        } else {
-                                            Vec::new()
-                                        }
-                                    };
-
-                                    let signal_msg = serde_json::json!({
-                                        "type": "signal",
-                                        "data": data
-                                    })
-                                    .to_string();
-
-                                    for sender in senders {
-                                        let _ = sender.send(signal_msg.clone()).await;
                                     }
                                 }
+                                Message::Ping(ping) => {
+                                    let _ = tx.send(Message::Pong(ping)).await;
+                                }
+                                _ => {}
                             }
                         }
 
@@ -165,7 +173,7 @@ impl InProcessRelay {
                                         "count": count
                                     })
                                     .to_string();
-                                    let senders: Vec<mpsc::Sender<String>> =
+                                    let senders: Vec<mpsc::Sender<Message>> =
                                         connections.iter().map(|c| c.tx.clone()).collect();
                                     (Some(member), senders)
                                 } else {
@@ -175,7 +183,7 @@ impl InProcessRelay {
 
                             if let Some(msg) = member_msg {
                                 for sender in senders {
-                                    let _ = sender.send(msg.clone()).await;
+                                    let _ = sender.send(Message::Text(msg.clone().into())).await;
                                 }
                             }
                         }

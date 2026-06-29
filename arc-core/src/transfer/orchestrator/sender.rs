@@ -584,8 +584,7 @@ pub async fn run_sender(
     let (identity, config) = crate::storage::get_or_create_identity()?;
 
     // Load secret key for Iroh
-    let secret_key_bytes = crate::keystore::get_identity_secret()
-        .map_err(|e| anyhow::anyhow!("failed to read identity secret: {:?}", e))?;
+    let secret_key_bytes = identity.secret_bytes();
     let secret_key = iroh::SecretKey::from_bytes(&secret_key_bytes);
 
     // Initialize Iroh endpoint
@@ -794,8 +793,7 @@ pub async fn run_stdin_sender(
     let (identity, config) = crate::storage::get_or_create_identity()?;
 
     // Load secret key for Iroh
-    let secret_key_bytes = crate::keystore::get_identity_secret()
-        .map_err(|e| anyhow::anyhow!("failed to read identity secret: {:?}", e))?;
+    let secret_key_bytes = identity.secret_bytes();
     let secret_key = iroh::SecretKey::from_bytes(&secret_key_bytes);
 
     // Initialize Iroh endpoint
