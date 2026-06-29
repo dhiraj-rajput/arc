@@ -295,7 +295,7 @@ fn get_or_create_identity_internal() -> Result<(DeviceIdentity, ArcConfig), anyh
             device_name: hostname,
             identity_secret: config_secret,
             peers: Vec::new(),
-            relay_url: "wss://relay.arc.sh/ws".to_string(),
+            relay_url: "wss://arc-relay.onrender.com/ws".to_string(),
             max_upload_mbps: None,
             dns_probe_ipv4: default_dns_probe_ipv4(),
             dns_probe_ipv6: default_dns_probe_ipv6(),

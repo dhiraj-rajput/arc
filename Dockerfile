@@ -1,5 +1,5 @@
 # Multi-stage build for Rust arc-relay
-FROM rust:1.80-slim as builder
+FROM rust:1.85-slim as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*

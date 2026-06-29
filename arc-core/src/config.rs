@@ -51,7 +51,7 @@ pub fn default_config() -> ArcConfig {
         device_name: hostname,
         identity_secret: None,
         peers: Vec::new(),
-        relay_url: "wss://relay.arc.sh/ws".to_string(),
+        relay_url: "wss://arc-relay.onrender.com/ws".to_string(),
         max_upload_mbps: None,
         dns_probe_ipv4: "8.8.8.8:80".to_string(),
         dns_probe_ipv6: "[2001:4860:4860::8888]:80".to_string(),

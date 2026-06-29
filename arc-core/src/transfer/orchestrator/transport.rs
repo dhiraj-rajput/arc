@@ -302,7 +302,7 @@ pub async fn run_pairing_sender(
                 .copied()
                 .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
             let service_type = "_arc-pair._tcp.local.";
-            let instance_name = room_id.clone();
+            let instance_name = room_id[..32].to_string();
             let host_name = format!("{}.local.", instance_name);
             let service_info = ServiceInfo::new(
                 service_type,
@@ -455,7 +455,7 @@ pub async fn run_pairing_receiver(
                 if let Ok(ServiceEvent::ServiceResolved(info)) =
                     receiver.recv_timeout(Duration::from_millis(100))
                 {
-                    if info.get_fullname().contains(&room_id) {
+                    if info.get_fullname().contains(&room_id[..32]) {
                         let port = info.get_port();
                         if let Some(ip) = info.get_addresses().iter().next() {
                             resolved_addr = Some(SocketAddr::new(ip.to_ip_addr(), port));

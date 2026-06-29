@@ -19,17 +19,42 @@ pub async fn exec_uninstall() -> anyhow::Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        let mut exe_str = current_exe.to_string_lossy().to_string();
-        if exe_str.starts_with(r"\\?\") {
-            exe_str = exe_str[4..].to_string();
+        let target_dir = current_exe
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let mut target_dir_clean = target_dir.clone();
+        if target_dir_clean.starts_with(r"\\?\") {
+            target_dir_clean = target_dir_clean[4..].to_string();
         }
 
-        // Spawn a background PowerShell command to wait 1 second and force-delete the exe.
-        // PowerShell handles arguments cleanly without cmd's nested-quote stripping issues.
+        let parent_dir = current_exe
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let mut parent_dir_clean = parent_dir.clone();
+        if parent_dir_clean.starts_with(r"\\?\") {
+            parent_dir_clean = parent_dir_clean[4..].to_string();
+        }
+
+        // Spawn a background PowerShell command to wait 1 second, force-delete the entire folder recursively,
+        // and clean the User PATH.
         std::process::Command::new("powershell")
             .args([
                 "-Command",
-                &format!("Start-Sleep -Seconds 1; Remove-Item -Force '{}'", exe_str),
+                &format!(
+                    "Start-Sleep -Seconds 1; \
+                     Remove-Item -Recurse -Force '{}'; \
+                     $targetDir = '{}'; \
+                     $userPath = [System.Environment]::GetEnvironmentVariable('PATH', 'User'); \
+                     if ($userPath) {{ \
+                         $newPathElements = ($userPath -split ';') | Where-Object {{ $_.Trim().ToLower() -ne $targetDir.ToLower() -and $_.Trim() -ne '' }}; \
+                         $newUserPath = $newPathElements -join ';'; \
+                         [System.Environment]::SetEnvironmentVariable('PATH', $newUserPath, 'User'); \
+                     }}",
+                    parent_dir_clean, target_dir_clean
+                ),
             ])
             .spawn()?;
         println!("✨ arc has been uninstalled successfully!");
