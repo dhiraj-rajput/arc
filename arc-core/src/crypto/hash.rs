@@ -27,7 +27,11 @@ use std::path::Path;
 /// Returns a 32-byte BLAKE3 hash.
 pub fn blake3_hash_parallel(data: &[u8]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update_rayon(data);
+    if data.len() > 2 * 1024 * 1024 {
+        hasher.update_rayon(data);
+    } else {
+        hasher.update(data);
+    }
     *hasher.finalize().as_bytes()
 }
 
@@ -99,6 +103,14 @@ pub fn blake3_hash_dir(dir: &Path) -> io::Result<[u8; 32]> {
             for entry in std::fs::read_dir(dir)? {
                 let entry = entry?;
                 let path = entry.path();
+                
+                // Do not follow or traverse symlinks to avoid stack overflows and external leakage
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_symlink() {
+                        continue;
+                    }
+                }
+
                 if path.is_dir() {
                     visit_dirs(&path, base, entries)?;
                 } else {

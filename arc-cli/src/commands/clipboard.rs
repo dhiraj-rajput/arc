@@ -115,6 +115,11 @@ pub async fn exec_clipboard_sync(
                                 "\n📋 Received Shared Clipboard Text:\n----------------------------------------\n{}\n----------------------------------------",
                                 payload.text
                             );
+                            if let Ok(mut ctx) = arboard::Clipboard::new() {
+                                // SEC-8: Sanitize terminal escape sequences (ESC character '\x1b')
+                                let sanitized = payload.text.replace('\x1b', "?");
+                                let _ = ctx.set_text(sanitized);
+                            }
                         }
                     }
                 }

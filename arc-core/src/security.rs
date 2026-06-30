@@ -106,7 +106,8 @@ pub fn resolve_safe_path(
     destination: &Path,
     received_path: &str,
 ) -> Result<PathBuf, SecurityError> {
-    let relative = validate_path_component(received_path)?;
+    let normalized_path = received_path.replace('\\', "/");
+    let relative = validate_path_component(&normalized_path)?;
     if !destination.exists() {
         let _ = std::fs::create_dir_all(destination);
     }
@@ -242,7 +243,7 @@ pub fn safe_unpack_tar(
             ));
         }
         let path = entry.path()?.to_path_buf();
-        let path_str = path.to_string_lossy();
+        let path_str = path.to_string_lossy().replace('\\', "/");
         let safe_relative = validate_path_component(&path_str)?;
         let dest_path = canon_dest.join(&safe_relative);
 

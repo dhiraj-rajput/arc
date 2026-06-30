@@ -126,8 +126,14 @@ pub fn decompress_with_limit(
             }
             Ok(data.to_vec())
         }
-        CompressionAlgo::Zstd => zstd::bulk::decompress(data, max_size)
-            .map_err(|e| CompressionError::DecompressFailed(e.to_string())),
+        CompressionAlgo::Zstd => {
+            let limit = match zstd::zstd_safe::get_frame_content_size(data) {
+                Ok(Some(sz)) if sz as usize <= max_size => sz as usize,
+                _ => max_size,
+            };
+            zstd::bulk::decompress(data, limit)
+                .map_err(|e| CompressionError::DecompressFailed(e.to_string()))
+        }
         CompressionAlgo::Lz4 => {
             if data.len() < 4 {
                 return Err(CompressionError::DecompressFailed(

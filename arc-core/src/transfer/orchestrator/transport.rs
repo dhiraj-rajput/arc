@@ -336,14 +336,20 @@ pub async fn run_pairing_sender(
     while let Some(msg_res) = ws_read.next().await {
         let msg = msg_res?;
         if let Message::Text(text) = msg {
-            if let Ok(WsRelayMessage::Signal { data }) =
-                serde_json::from_str::<WsRelayMessage>(&text)
-            {
-                if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                    if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
-                        receiver_handshake = Some(payload);
-                        break;
+            if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
+                match relay_msg {
+                    WsRelayMessage::Signal { data } => {
+                        if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                            if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                                receiver_handshake = Some(payload);
+                                break;
+                            }
+                        }
                     }
+                    WsRelayMessage::RoomMemberCount { count, .. } if count > 2 => {
+                        return Err(anyhow::anyhow!("Relay MITM detected (members > 2)"));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -543,19 +549,25 @@ pub async fn run_pairing_receiver(
     let sig_json = serde_json::to_string(&sig_req)?;
     ws_write.send(Message::Text(sig_json.into())).await?;
 
-    // Wait for sender handshake
+    // Wait for handshake payload from sender
     let mut sender_handshake: Option<HandshakePayload> = None;
     while let Some(msg_res) = ws_read.next().await {
         let msg = msg_res?;
         if let Message::Text(text) = msg {
-            if let Ok(WsRelayMessage::Signal { data }) =
-                serde_json::from_str::<WsRelayMessage>(&text)
-            {
-                if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                    if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
-                        sender_handshake = Some(payload);
-                        break;
+            if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
+                match relay_msg {
+                    WsRelayMessage::Signal { data } => {
+                        if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                            if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                                sender_handshake = Some(payload);
+                                break;
+                            }
+                        }
                     }
+                    WsRelayMessage::RoomMemberCount { count, .. } if count > 2 => {
+                        return Err(anyhow::anyhow!("Relay MITM detected (members > 2)"));
+                    }
+                    _ => {}
                 }
             }
         }

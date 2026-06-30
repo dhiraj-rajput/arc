@@ -155,7 +155,6 @@ enum ClientMessage {
     /// Join or create a room.
     Join {
         room_id: String,
-        #[allow(dead_code)]
         max_members: Option<usize>,
     },
     /// Forward a signaling payload to the peer in the same room.
@@ -272,12 +271,12 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, client_id: String
                         }
 
                         match serde_json::from_str::<ClientMessage>(&text) {
-                            Ok(ClientMessage::Join { room_id, .. }) => {
+                            Ok(ClientMessage::Join { room_id, max_members }) => {
                                 // BUG-6: Leave old room before joining a new one
                                 if let Some(old_room) = current_room.take() {
                                     handle_leave(&state, old_room, &client_id).await;
                                 }
-                                handle_join(&mut socket, &state, &mut current_room, &mut room_rx, room_id, &client_id).await;
+                                handle_join(&mut socket, &state, &mut current_room, &mut room_rx, room_id, &client_id, max_members).await;
                             }
                             Ok(ClientMessage::Signal { room_id, data }) => {
                                 handle_signal(&state, room_id, data, &client_id).await;
@@ -344,6 +343,7 @@ async fn handle_join(
     room_rx: &mut Option<broadcast::Receiver<BroadcastPayload>>,
     room_id: String,
     client_id: &str,
+    max_members: Option<usize>,
 ) {
     if room_id.len() != 64 || !room_id.chars().all(|c| c.is_ascii_hexdigit()) {
         let err = RelayMessage::Error {
@@ -366,11 +366,12 @@ async fn handle_join(
     }
 
     let (member_count, rx) = {
+        let limit = max_members.unwrap_or(MAX_MEMBERS_PER_ROOM).clamp(1, 10);
         let mut entry = state.rooms.entry(room_id.clone()).or_insert_with(|| {
             let (tx, _) = broadcast::channel(32);
             RelayRoom {
                 member_count: 0,
-                max_members: MAX_MEMBERS_PER_ROOM, // Enforce server-side limit of 2 (INV-9)
+                max_members: limit,
                 created_at: Instant::now(),
                 tx,
             }
