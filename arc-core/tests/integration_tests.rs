@@ -27,7 +27,7 @@ async fn test_integration_pairing() {
 
     let (sender_res, receiver_res) = tokio::join!(sender_fut, receiver_fut);
 
-    let _peer_id_from_sender = sender_res.expect("sender pairing failed");
+    let (_peer_id_from_sender, _sender_peer_name) = sender_res.expect("sender pairing failed");
     let (peer_id_from_receiver, receiver_name) = receiver_res.expect("receiver pairing failed");
 
     assert_eq!(receiver_name, "sender-device");

@@ -36,7 +36,9 @@ pub async fn exec_pair(
         println!("==================");
         println!("Provide this membrane pairing code to your other device:");
         println!("\n    👉 \x1b[1;36m{}\x1b[0m 👈\n", pairing_code);
-        println!("Waiting for the other device to connect and authenticate...");
+        println!(
+            "Membrane pairing code generated. Waiting for the other device to connect and authenticate..."
+        );
 
         // Generate dynamic QR code for pairing
         if let Ok(code_obj) = qrcode::QrCode::new(pairing_code.as_bytes()) {
@@ -49,11 +51,10 @@ pub async fn exec_pair(
             println!("{}", image);
         }
 
-        run_pairing_sender(&pairing_code, relay_url, &display_name).await?;
-        println!(
-            "\n🎉 Pairing completed successfully! Device '{}' is now authorized.",
-            display_name
-        );
+        println!("Connecting to relay and listening for connection...");
+        let (peer_id, peer_name) =
+            run_pairing_sender(&pairing_code, relay_url, &display_name).await?;
+        handle_approval_and_save(peer_id, peer_name).await?;
     } else {
         let code = if let Some(code_val) = joiner {
             code_val
@@ -67,11 +68,50 @@ pub async fn exec_pair(
         println!("===============");
         println!("Connecting to relay and authenticating identity keys...");
 
-        run_pairing_receiver(&code, relay_url, &display_name).await?;
-        println!(
-            "\n🎉 Pairing completed successfully! Device '{}' is now authorized.",
-            display_name
-        );
+        let (peer_id, peer_name) = run_pairing_receiver(&code, relay_url, &display_name).await?;
+        handle_approval_and_save(peer_id, peer_name).await?;
     }
     Ok(())
+}
+
+async fn handle_approval_and_save(peer_id: [u8; 32], peer_name: String) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
+    let mut approved = true;
+
+    if std::io::stdin().is_terminal() {
+        println!("\n🤝 Incoming Device Pairing Request:");
+        println!("----------------------------------------");
+        println!("  Device Name: {}", peer_name);
+        println!("  Device ID:   {}", hex::encode(peer_id));
+        println!("----------------------------------------");
+
+        approved = dialoguer::Confirm::new()
+            .with_prompt("Do you want to authorize and pair with this device?")
+            .default(false)
+            .interact()?;
+    } else {
+        println!(
+            "Non-interactive mode: Auto-approving pairing with '{}' (ID: {})",
+            peer_name,
+            hex::encode(peer_id)
+        );
+    }
+
+    if approved {
+        let (_, mut config) = get_identity_with_merged_config()?;
+        if !config.peers.iter().any(|p| p.device_id == peer_id) {
+            config.peers.push(arc_core::PeerInfo {
+                name: peer_name.clone(),
+                device_id: peer_id,
+            });
+            arc_core::save_config(&config)?;
+        }
+        println!(
+            "\n🎉 Pairing completed successfully! Device '{}' is now authorized.",
+            peer_name
+        );
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Pairing rejected by user"))
+    }
 }

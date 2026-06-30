@@ -43,7 +43,27 @@ pub async fn exec_receive(
     spawn_progress_task(rx, false);
 
     let stdout_tx_opt = if stdout { Some(stdout_tx) } else { None };
-    let clipboard_content = run_receiver(&dir, &phrase, relay_url, Some(tx), stdout_tx_opt).await?;
+    let result = run_receiver(&dir, &phrase, relay_url, Some(tx), stdout_tx_opt).await;
+    let clipboard_content = match result {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("\n❌ Receive failed: {}", e);
+            if e.to_string().contains("relay")
+                || e.to_string().contains("WebSocket")
+                || e.to_string().contains("connection")
+            {
+                eprintln!(
+                    "💡 Tip: The relay server might be offline, or your device might not be connected to the internet."
+                );
+                eprintln!("   Please check your network settings and try again.");
+            } else if e.to_string().contains("MITM") {
+                eprintln!(
+                    "⚠️ Security Alert: Relay room integrity check failed (possible MITM eavesdropping attempt). Connection closed."
+                );
+            }
+            return Err(e);
+        }
+    };
 
     if let Some(text) = clipboard_content {
         println!("Writing received text to system clipboard...");

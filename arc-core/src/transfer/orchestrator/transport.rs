@@ -278,11 +278,11 @@ pub async fn run_pairing_sender(
     phrase: &str,
     relay_url: &str,
     device_name: &str,
-) -> Result<[u8; 32], anyhow::Error> {
+) -> Result<([u8; 32], String), anyhow::Error> {
     let phrase_seed = crate::crypto::derive_key_from_phrase(phrase);
     let room_id = hex::encode(blake3::hash(&phrase_seed).as_bytes());
 
-    let (identity, config) = crate::storage::get_or_create_identity()?;
+    let (identity, _) = crate::storage::get_or_create_identity()?;
 
     let mut local_relay = None;
     let ws_stream = match crate::connect_relay(relay_url).await {
@@ -340,7 +340,9 @@ pub async fn run_pairing_sender(
                 match relay_msg {
                     WsRelayMessage::Signal { data } => {
                         if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                            if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                            if let Ok(payload) =
+                                serde_json::from_slice::<HandshakePayload>(&decrypted)
+                            {
                                 receiver_handshake = Some(payload);
                                 break;
                             }
@@ -407,26 +409,12 @@ pub async fn run_pairing_sender(
     let sig_json = serde_json::to_string(&sig_req)?;
     ws_write.send(Message::Text(sig_json.into())).await?;
 
-    // Save peer info
-    let mut updated_config = config.clone();
-    if !updated_config
-        .peers
-        .iter()
-        .any(|p| p.device_id == rx_payload.device_id)
-    {
-        updated_config.peers.push(crate::storage::PeerInfo {
-            name: rx_payload.device_name.clone(),
-            device_id: rx_payload.device_id,
-        });
-        crate::storage::save_config(&updated_config)?;
-    }
-
     if let Some((_, shutdown_tx, daemon, service_info)) = local_relay {
         let _ = shutdown_tx.send(());
         let _ = daemon.unregister(service_info.get_fullname());
     }
 
-    Ok(rx_payload.device_id)
+    Ok((rx_payload.device_id, rx_payload.device_name))
 }
 
 pub async fn run_pairing_receiver(
@@ -437,7 +425,7 @@ pub async fn run_pairing_receiver(
     let phrase_seed = crate::crypto::derive_key_from_phrase(phrase);
     let room_id = hex::encode(blake3::hash(&phrase_seed).as_bytes());
 
-    let (identity, config) = crate::storage::get_or_create_identity()?;
+    let (identity, _) = crate::storage::get_or_create_identity()?;
 
     let ws_stream = match crate::connect_relay(relay_url).await {
         Ok(stream) => stream,
@@ -558,7 +546,9 @@ pub async fn run_pairing_receiver(
                 match relay_msg {
                     WsRelayMessage::Signal { data } => {
                         if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                            if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                            if let Ok(payload) =
+                                serde_json::from_slice::<HandshakePayload>(&decrypted)
+                            {
                                 sender_handshake = Some(payload);
                                 break;
                             }
@@ -596,20 +586,6 @@ pub async fn run_pairing_receiver(
         }
     } else {
         return Err(anyhow::anyhow!("Missing handshake signature from sender"));
-    }
-
-    // Save peer info
-    let mut updated_config = config.clone();
-    if !updated_config
-        .peers
-        .iter()
-        .any(|p| p.device_id == tx_payload.device_id)
-    {
-        updated_config.peers.push(crate::storage::PeerInfo {
-            name: tx_payload.device_name.clone(),
-            device_id: tx_payload.device_id,
-        });
-        crate::storage::save_config(&updated_config)?;
     }
 
     Ok((tx_payload.device_id, tx_payload.device_name))

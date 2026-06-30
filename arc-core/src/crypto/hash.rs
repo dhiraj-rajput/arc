@@ -103,7 +103,7 @@ pub fn blake3_hash_dir(dir: &Path) -> io::Result<[u8; 32]> {
             for entry in std::fs::read_dir(dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                
+
                 // Do not follow or traverse symlinks to avoid stack overflows and external leakage
                 if let Ok(file_type) = entry.file_type() {
                     if file_type.is_symlink() {

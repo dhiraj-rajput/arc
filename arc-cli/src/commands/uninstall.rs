@@ -40,7 +40,9 @@ pub async fn exec_uninstall() -> anyhow::Result<()> {
 
         // Enforce safety checks to ensure we do not delete root directory or unrelated directories
         if !parent_dir_clean.to_lowercase().contains("arc") {
-            return Err(anyhow::anyhow!("Safety check failed: uninstall target folder must be named 'arc'"));
+            return Err(anyhow::anyhow!(
+                "Safety check failed: uninstall target folder must be named 'arc'"
+            ));
         }
 
         // Spawn a background PowerShell command to wait 1 second, force-delete the entire folder recursively,
