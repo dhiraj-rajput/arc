@@ -276,7 +276,9 @@ pub fn prompt_file_path(
 
     loop {
         // Canonicalize current_dir for cleaner display, if possible
-        let display_dir = current_dir.canonicalize().unwrap_or_else(|_| current_dir.clone());
+        let display_dir = current_dir
+            .canonicalize()
+            .unwrap_or_else(|_| current_dir.clone());
 
         // Read directory contents
         let mut subdirs = Vec::new();
@@ -310,9 +312,15 @@ pub fn prompt_file_path(
         };
 
         let prompt_header = if only_directories {
-            format!("Select destination directory to save received files (Current: {})", display_dir.display())
+            format!(
+                "Select destination directory to save received files (Current: {})",
+                display_dir.display()
+            )
         } else {
-            format!("Choose file or directory to send (Current: {})", display_dir.display())
+            format!(
+                "Choose file or directory to send (Current: {})",
+                display_dir.display()
+            )
         };
 
         // Build list of options
