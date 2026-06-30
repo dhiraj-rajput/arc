@@ -313,7 +313,7 @@ pub fn prompt_file_path(
 
         let prompt_header = if only_directories {
             format!(
-                "Select destination directory to save received files (Current: {})",
+                "Browse folders to save received files (Current: {})",
                 display_dir.display()
             )
         } else {
@@ -327,6 +327,25 @@ pub fn prompt_file_path(
         let mut options = Vec::new();
         options.push(select_current_label);
         options.push(type_manual_label);
+
+        // Windows drive letter switching logic
+        #[cfg(target_os = "windows")]
+        let mut alt_drives = Vec::new();
+        #[cfg(target_os = "windows")]
+        {
+            let current_upper = display_dir.to_string_lossy().to_string().to_uppercase();
+            for c in b'A'..=b'Z' {
+                let drive_str = format!("{}:\\", c as char);
+                if std::path::Path::new(&drive_str).exists() {
+                    if !current_upper.starts_with(&drive_str.to_uppercase()) {
+                        alt_drives.push(drive_str);
+                    }
+                }
+            }
+            for drive in &alt_drives {
+                options.push(format!("💾 [Switch drive to {}]", drive));
+            }
+        }
 
         // Add ".." option if we have a parent
         let has_parent = display_dir.parent().is_some();
@@ -383,8 +402,13 @@ pub fn prompt_file_path(
             let path_obj = std::path::Path::new(trimmed);
             if path_obj.exists() {
                 if path_obj.is_dir() {
-                    // Navigate to it so it updates the dropdown
-                    current_dir = path_obj.to_path_buf();
+                    if path_obj.parent().is_none() {
+                        // It is a root drive (like C:\ or /) - navigate to it
+                        current_dir = path_obj.to_path_buf();
+                    } else {
+                        // It is a subdirectory - select it immediately!
+                        return Ok(trimmed.to_string());
+                    }
                 } else {
                     if only_directories {
                         println!("⚠️ Selected path is a file, but a directory is required.");
@@ -400,6 +424,17 @@ pub fn prompt_file_path(
         }
 
         let mut offset = 2;
+
+        #[cfg(target_os = "windows")]
+        {
+            if selection < offset + alt_drives.len() {
+                let drive_str = &alt_drives[selection - offset];
+                current_dir = std::path::PathBuf::from(drive_str);
+                continue;
+            }
+            offset += alt_drives.len();
+        }
+
         if has_parent {
             if selection == offset {
                 // ".."

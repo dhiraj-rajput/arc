@@ -41,6 +41,27 @@ pub async fn connect_relay(
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     use tokio_tungstenite::connect_async;
-    let (ws_stream, _) = connect_async(url_str).await?;
-    Ok(ws_stream)
+    let mut attempts = 0;
+    let max_attempts = 3;
+
+    loop {
+        attempts += 1;
+        match connect_async(url_str).await {
+            Ok((ws_stream, _)) => return Ok(ws_stream),
+            Err(e) => {
+                if attempts >= max_attempts {
+                    return Err(anyhow::anyhow!(
+                        "Failed to connect to relay after {} attempts: {}",
+                        max_attempts,
+                        e
+                    ));
+                }
+                println!(
+                    "⚠️ Relay connection attempt {} failed ({}). Retrying in 1s...",
+                    attempts, e
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
+    }
 }
