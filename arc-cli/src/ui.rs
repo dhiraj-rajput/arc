@@ -272,90 +272,124 @@ pub fn prompt_file_path(
     theme: &dialoguer::theme::ColorfulTheme,
     only_directories: bool,
 ) -> Result<String, anyhow::Error> {
-    let mut current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let mut current_path = String::new();
 
     loop {
-        let canonical = current_dir
-            .canonicalize()
-            .unwrap_or_else(|_| current_dir.clone());
-        println!("\n📁 Current directory: {}", canonical.display());
+        // Print directory preview if current_path is set
+        let preview_path = if current_path.is_empty() {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        } else {
+            std::path::PathBuf::from(&current_path)
+        };
 
-        let mut choices = vec![
-            "📄 [Select this directory]".to_string(),
-            "⬆️  .. (Go up)".to_string(),
-            "✍️  [Type a custom path]".to_string(),
-            "❌ [Cancel]".to_string(),
-        ];
+        if let Ok(canonical) = preview_path.canonicalize() {
+            println!("\n📁 Current directory: {}", canonical.display());
 
-        let mut entries = Vec::new();
-        if let Ok(read) = std::fs::read_dir(&current_dir) {
-            for entry in read.flatten() {
-                if let Ok(metadata) = entry.metadata() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if metadata.is_dir() {
-                        entries.push((true, format!("📁 {}/", name), entry.path()));
-                    } else if !only_directories {
-                        entries.push((false, format!("📄 {}", name), entry.path()));
+            // List contents of this directory
+            if let Ok(entries) = std::fs::read_dir(&canonical) {
+                let mut dirs = Vec::new();
+                let mut files = Vec::new();
+                for entry in entries.flatten() {
+                    if let Ok(metadata) = entry.metadata() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if metadata.is_dir() {
+                            dirs.push(name);
+                        } else if !only_directories {
+                            files.push(name);
+                        }
                     }
                 }
+                dirs.sort();
+                files.sort();
+
+                if !dirs.is_empty() {
+                    print!("  Folders: ");
+                    for d in dirs.iter().take(8) {
+                        print!("📁 {}/  ", d);
+                    }
+                    if dirs.len() > 8 {
+                        print!("... (+{})", dirs.len() - 8);
+                    }
+                    println!();
+                }
+                if !files.is_empty() {
+                    print!("  Files:   ");
+                    for f in files.iter().take(8) {
+                        print!("📄 {}  ", f);
+                    }
+                    if files.len() > 8 {
+                        print!("... (+{})", files.len() - 8);
+                    }
+                    println!();
+                }
             }
         }
 
-        // Sort directories first, then files
-        entries.sort_by(|a, b| {
-            if a.0 == b.0 {
-                a.1.cmp(&b.1)
-            } else {
-                b.0.cmp(&a.0)
-            }
-        });
+        // Ask the user to type a path
+        let prompt_msg = if only_directories {
+            "Type directory path (Tab for autocomplete, 'back' to cancel)"
+        } else {
+            "Type file/directory path (Tab for autocomplete, 'back' to cancel)"
+        };
 
-        for entry in &entries {
-            choices.push(entry.1.clone());
-        }
-
-        let selection = dialoguer::Select::with_theme(theme)
-            .with_prompt(if only_directories {
-                "Choose a directory or action"
+        let path_input: String = dialoguer::Input::with_theme(theme)
+            .with_prompt(prompt_msg)
+            .completion_with(&PathCompleter)
+            .default(if current_path.is_empty() {
+                ".".to_string()
             } else {
-                "Choose a file/directory or action"
+                current_path.clone()
             })
-            .default(0)
-            .items(&choices)
-            .interact()?;
+            .interact_text()?;
 
-        match selection {
-            0 => {
-                return Ok(current_dir.to_string_lossy().to_string());
-            }
-            1 => {
-                if let Some(parent) = current_dir.parent() {
-                    current_dir = parent.to_path_buf();
+        let trimmed = path_input.trim();
+        if trimmed == "back" || trimmed == "exit" {
+            return Ok("back".to_string());
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let path_obj = std::path::Path::new(trimmed);
+        if path_obj.exists() {
+            if path_obj.is_dir() {
+                // Ask if they want to select this directory or browse/type more
+                let selections = &[
+                    "📄 [Select this directory]",
+                    "📁 [Browse / Type more inside this folder]",
+                    "✍️ [Type a different path]",
+                ];
+                let selection = dialoguer::Select::with_theme(theme)
+                    .with_prompt(format!(
+                        "Directory exists: '{}'. What do you want to do?",
+                        trimmed
+                    ))
+                    .items(selections)
+                    .default(1)
+                    .interact()?;
+
+                match selection {
+                    0 => return Ok(trimmed.to_string()),
+                    1 => {
+                        // Move inside and type more
+                        current_path = trimmed.to_string();
+                        // Append trailing separator if missing
+                        if !current_path.ends_with('/') && !current_path.ends_with('\\') {
+                            current_path.push(std::path::MAIN_SEPARATOR);
+                        }
+                    }
+                    _ => {}
                 }
-            }
-            2 => {
-                let path: String = dialoguer::Input::with_theme(theme)
-                    .with_prompt("Type the custom path (type 'back' to cancel)")
-                    .interact_text()?;
-                if path.trim() == "back" || path.trim().is_empty() {
-                    continue;
-                }
-                return Ok(path);
-            }
-            3 => {
-                return Ok("back".to_string());
-            }
-            _ => {
-                let entry_idx = selection - 4;
-                let entry = &entries[entry_idx];
-                if entry.0 {
-                    // Enter directory
-                    current_dir = entry.2.clone();
+            } else {
+                // If it is a file, verify we are allowed to select files
+                if only_directories {
+                    println!("⚠️ Selected path is a file, but a directory is required.");
                 } else {
-                    // Select file
-                    return Ok(entry.2.to_string_lossy().to_string());
+                    return Ok(trimmed.to_string());
                 }
             }
+        } else {
+            println!("⚠️ Path '{}' does not exist. Please try again.", trimmed);
         }
     }
 }

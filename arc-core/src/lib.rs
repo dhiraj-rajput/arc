@@ -38,6 +38,8 @@ pub async fn connect_relay(
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     anyhow::Error,
 > {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     use tokio_tungstenite::connect_async;
     let (ws_stream, _) = connect_async(url_str).await?;
     Ok(ws_stream)

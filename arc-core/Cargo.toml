@@ -29,6 +29,7 @@ chacha20poly1305 = "0.10.1"
 aes-gcm = "0.10.3"
 blake3 = { version = "1.8.5", features = ["rayon"] }
 rand = "0.10.1"
+rustls = { version = "0.23.23", features = ["ring"] }
 # rand_core 0.6 is needed for x25519-dalek 2.0.1 compatibility (its CryptoRng trait)
 rand_core_06 = { package = "rand_core", version = "0.6.4", features = ["getrandom"] }
 zeroize = "1.9.0"
