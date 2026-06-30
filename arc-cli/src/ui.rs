@@ -268,6 +268,98 @@ impl dialoguer::Completion for PathCompleter {
     }
 }
 
+pub fn prompt_file_path(
+    theme: &dialoguer::theme::ColorfulTheme,
+    only_directories: bool,
+) -> Result<String, anyhow::Error> {
+    let mut current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    loop {
+        let canonical = current_dir
+            .canonicalize()
+            .unwrap_or_else(|_| current_dir.clone());
+        println!("\n📁 Current directory: {}", canonical.display());
+
+        let mut choices = vec![
+            "📄 [Select this directory]".to_string(),
+            "⬆️  .. (Go up)".to_string(),
+            "✍️  [Type a custom path]".to_string(),
+            "❌ [Cancel]".to_string(),
+        ];
+
+        let mut entries = Vec::new();
+        if let Ok(read) = std::fs::read_dir(&current_dir) {
+            for entry in read.flatten() {
+                if let Ok(metadata) = entry.metadata() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if metadata.is_dir() {
+                        entries.push((true, format!("📁 {}/", name), entry.path()));
+                    } else if !only_directories {
+                        entries.push((false, format!("📄 {}", name), entry.path()));
+                    }
+                }
+            }
+        }
+
+        // Sort directories first, then files
+        entries.sort_by(|a, b| {
+            if a.0 == b.0 {
+                a.1.cmp(&b.1)
+            } else {
+                b.0.cmp(&a.0)
+            }
+        });
+
+        for entry in &entries {
+            choices.push(entry.1.clone());
+        }
+
+        let selection = dialoguer::Select::with_theme(theme)
+            .with_prompt(if only_directories {
+                "Choose a directory or action"
+            } else {
+                "Choose a file/directory or action"
+            })
+            .default(0)
+            .items(&choices)
+            .interact()?;
+
+        match selection {
+            0 => {
+                return Ok(current_dir.to_string_lossy().to_string());
+            }
+            1 => {
+                if let Some(parent) = current_dir.parent() {
+                    current_dir = parent.to_path_buf();
+                }
+            }
+            2 => {
+                let path: String = dialoguer::Input::with_theme(theme)
+                    .with_prompt("Type the custom path (type 'back' to cancel)")
+                    .interact_text()?;
+                if path.trim() == "back" || path.trim().is_empty() {
+                    continue;
+                }
+                return Ok(path);
+            }
+            3 => {
+                return Ok("back".to_string());
+            }
+            _ => {
+                let entry_idx = selection - 4;
+                let entry = &entries[entry_idx];
+                if entry.0 {
+                    // Enter directory
+                    current_dir = entry.2.clone();
+                } else {
+                    // Select file
+                    return Ok(entry.2.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,8 +7,8 @@ pub mod commands;
 mod ui;
 
 pub use ui::{
-    PathCompleter, derive_deterministic_phrase, generate_phrase, setup_progress_bar,
-    validate_passphrase,
+    PathCompleter, derive_deterministic_phrase, generate_phrase, prompt_file_path,
+    setup_progress_bar, validate_passphrase,
 };
 
 use clap::{Parser, Subcommand};
@@ -308,10 +308,7 @@ async fn run_interactive_menu() -> anyhow::Result<()> {
 
         match selection {
             0 => {
-                let path: String = Input::with_theme(&theme)
-                    .with_prompt("Path to the file or directory to send (type 'back' to cancel)")
-                    .completion_with(&PathCompleter)
-                    .interact_text()?;
+                let path = prompt_file_path(&theme, false)?;
                 if path.trim() == "back" || path.trim() == "exit" || path.trim().is_empty() {
                     println!("Operation cancelled.");
                     continue;
@@ -388,15 +385,8 @@ async fn run_interactive_menu() -> anyhow::Result<()> {
                     }
                 };
 
-                let default_save_dir = dirs::download_dir()
-                    .map(|d| d.to_string_lossy().to_string())
-                    .unwrap_or_else(|| ".".to_string());
-
-                let dir: String = Input::with_theme(&theme)
-                    .with_prompt("Save directory")
-                    .default(default_save_dir)
-                    .interact_text()?;
-                if dir.trim() == "back" || dir.trim() == "exit" {
+                let dir = prompt_file_path(&theme, true)?;
+                if dir.trim() == "back" || dir.trim() == "exit" || dir.trim().is_empty() {
                     println!("Operation cancelled.");
                     continue;
                 }
