@@ -336,10 +336,10 @@ pub fn prompt_file_path(
             let current_upper = display_dir.to_string_lossy().to_string().to_uppercase();
             for c in b'A'..=b'Z' {
                 let drive_str = format!("{}:\\", c as char);
-                if std::path::Path::new(&drive_str).exists() {
-                    if !current_upper.starts_with(&drive_str.to_uppercase()) {
-                        alt_drives.push(drive_str);
-                    }
+                if std::path::Path::new(&drive_str).exists()
+                    && !current_upper.starts_with(&drive_str.to_uppercase())
+                {
+                    alt_drives.push(drive_str);
                 }
             }
             for drive in &alt_drives {
