@@ -182,7 +182,11 @@ async fn run_quic_receiver_session(
 
     use std::io::IsTerminal;
 
-    if stdout_tx.is_none() && std::io::stdin().is_terminal() {
+    let is_test_or_ci = std::env::var_os("ARC_TEST_MODE").is_some()
+        || std::env::var_os("CI").is_some()
+        || std::env::var_os("GITHUB_ACTIONS").is_some();
+
+    if stdout_tx.is_none() && std::io::stdin().is_terminal() && !is_test_or_ci {
         let size_str = if total_size > 1024 * 1024 * 1024 {
             format!("{:.2} GB", total_size as f64 / (1024.0 * 1024.0 * 1024.0))
         } else if total_size > 1024 * 1024 {
@@ -207,6 +211,8 @@ async fn run_quic_receiver_session(
             let _ = send_msg_stream(&mut send_stream, &abort).await;
             return Err(anyhow::anyhow!("Transfer rejected by user"));
         }
+    } else if is_test_or_ci {
+        println!("Auto-accepting transfer in non-interactive mode.");
     }
 
     // Resolve absolute safe output path to prevent path traversal (SEC-2)
