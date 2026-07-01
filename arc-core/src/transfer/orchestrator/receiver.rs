@@ -180,7 +180,9 @@ async fn run_quic_receiver_session(
         file_name, total_size, chunk_count
     );
 
-    if stdout_tx.is_none() {
+use std::io::IsTerminal;
+
+    if stdout_tx.is_none() && std::io::stdin().is_terminal() {
         let size_str = if total_size > 1024 * 1024 * 1024 {
             format!("{:.2} GB", total_size as f64 / (1024.0 * 1024.0 * 1024.0))
         } else if total_size > 1024 * 1024 {
@@ -196,7 +198,7 @@ async fn run_quic_receiver_session(
             .with_prompt(&prompt_msg)
             .default(true)
             .interact()?;
-        
+
         if !accept_transfer {
             let abort = ArcMessage::TransferAbort {
                 transfer_id,
@@ -551,7 +553,10 @@ pub async fn run_receiver(
         let local_relay_url = format!("ws://{}:{}/ws", addr.ip(), addr.port());
         crate::connect_relay(&local_relay_url).await?
     } else {
-        println!("mDNS peer not found locally. Connecting to public relay at {}...", relay_url);
+        println!(
+            "mDNS peer not found locally. Connecting to public relay at {}...",
+            relay_url
+        );
         crate::connect_relay(relay_url).await?
     };
     let (mut ws_write, mut ws_read) = ws_stream.split();

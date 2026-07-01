@@ -724,7 +724,9 @@ pub async fn run_sender(
         max_members: if share_mode { Some(10) } else { Some(2) },
     };
     let join_json = serde_json::to_string(&join_req)?;
-    local_ws_write.send(Message::Text(join_json.clone().into())).await?;
+    local_ws_write
+        .send(Message::Text(join_json.clone().into()))
+        .await?;
     if let Some(ref mut w) = public_ws_write {
         let _ = w.send(Message::Text(join_json.into())).await;
     }
@@ -1045,7 +1047,9 @@ pub async fn run_stdin_sender(
         max_members: Some(2),
     };
     let join_json = serde_json::to_string(&join_req)?;
-    local_ws_write.send(Message::Text(join_json.clone().into())).await?;
+    local_ws_write
+        .send(Message::Text(join_json.clone().into()))
+        .await?;
     if let Some(ref mut w) = public_ws_write {
         let _ = w.send(Message::Text(join_json.into())).await;
     }
