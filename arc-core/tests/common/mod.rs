@@ -237,6 +237,7 @@ impl TestEnv {
                 "ARC_KEYRING_SUFFIX",
                 format!("test-{}", uuid::Uuid::new_v4()),
             );
+            std::env::set_var("ARC_DISABLE_MDNS", "1");
         }
         Self { config_dir }
     }
@@ -251,6 +252,7 @@ impl Drop for TestEnv {
         unsafe {
             std::env::remove_var(arc_core::storage::ENV_CONFIG_DIR);
             std::env::remove_var("ARC_KEYRING_SUFFIX");
+            std::env::remove_var("ARC_DISABLE_MDNS");
         }
     }
 }

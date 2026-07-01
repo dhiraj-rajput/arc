@@ -664,6 +664,7 @@ pub async fn run_sender(
     // Wait until endpoint has contacted the relay server to ensure our_node_addr contains routing info.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
     let our_node_addr = endpoint.addr();
+    println!("Sender: our_node_addr = {:?}", our_node_addr);
 
     let our_nonce: [u8; 32] = rand::random();
     let our_ephemeral = EphemeralKeyPair::generate();
@@ -680,35 +681,44 @@ pub async fn run_sender(
         signature: Some(sig.to_vec()),
     };
 
-    // Start local relay and register via mDNS
-    let (local_port, shutdown_tx) = super::transport::start_local_relay().await?;
-    let daemon = mdns_sd::ServiceDaemon::new()?;
-    let local_ips = crate::transfer::discovery::get_local_ips();
-    let ip_to_use = local_ips
-        .first()
-        .copied()
-        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
-    let service_type = "_arc-transfer._tcp.local.";
-    let instance_name = room_id[..32].to_string();
-    let host_name = format!("{}.local.", instance_name);
-    let service_info = mdns_sd::ServiceInfo::new(
-        service_type,
-        &instance_name,
-        &host_name,
-        ip_to_use,
-        local_port,
-        None,
-    )?;
-    daemon.register(service_info.clone())?;
-    let local_relay = Some((local_port, shutdown_tx, daemon, service_info));
+    let disable_mdns = std::env::var("ARC_DISABLE_MDNS").is_ok();
+    let mut local_relay = None;
+    let mut local_ws_write = None;
+    let mut local_ws_read = None;
 
-    let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
-    let local_ws = crate::connect_relay(&local_relay_url).await?;
+    if !disable_mdns {
+        // Start local relay and register via mDNS
+        let (local_port, shutdown_tx) = super::transport::start_local_relay().await?;
+        let daemon = mdns_sd::ServiceDaemon::new()?;
+        let local_ips = crate::transfer::discovery::get_local_ips();
+        let ip_to_use = local_ips
+            .first()
+            .copied()
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
+        let service_type = "_arc-transfer._tcp.local.";
+        let instance_name = room_id[..32].to_string();
+        let host_name = format!("{}.local.", instance_name);
+        let service_info = mdns_sd::ServiceInfo::new(
+            service_type,
+            &instance_name,
+            &host_name,
+            ip_to_use,
+            local_port,
+            None,
+        )?;
+        daemon.register(service_info.clone())?;
+        local_relay = Some((local_port, shutdown_tx, daemon, service_info));
+
+        let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
+        let local_ws = crate::connect_relay(&local_relay_url).await?;
+        let (w, r) = local_ws.split();
+        local_ws_write = Some(w);
+        local_ws_read = Some(r);
+    }
 
     // Connect to public relay in parallel
     let public_ws = crate::connect_relay(relay_url).await;
 
-    let (mut local_ws_write, mut local_ws_read) = local_ws.split();
     let (mut public_ws_write, mut public_ws_read) = match public_ws {
         Ok(stream) => {
             let (w, r) = stream.split();
@@ -724,9 +734,9 @@ pub async fn run_sender(
         max_members: if share_mode { Some(10) } else { Some(2) },
     };
     let join_json = serde_json::to_string(&join_req)?;
-    local_ws_write
-        .send(Message::Text(join_json.clone().into()))
-        .await?;
+    if let Some(ref mut w) = local_ws_write {
+        w.send(Message::Text(join_json.clone().into())).await?;
+    }
     if let Some(ref mut w) = public_ws_write {
         let _ = w.send(Message::Text(join_json.into())).await;
     }
@@ -739,7 +749,13 @@ pub async fn run_sender(
 
     loop {
         tokio::select! {
-            local_msg = local_ws_read.next() => {
+            local_msg = async {
+                if let Some(ref mut r) = local_ws_read {
+                    r.next().await
+                } else {
+                    futures_util::future::pending().await
+                }
+            } => {
                 if let Some(msg_res) = local_msg {
                     let msg = msg_res?;
                     if let Message::Text(text) = msg {
@@ -755,7 +771,9 @@ pub async fn run_sender(
                                             data: signal_data,
                                         };
                                         let sig_json = serde_json::to_string(&sig_req)?;
-                                        local_ws_write.send(Message::Text(sig_json.into())).await?;
+                                        if let Some(ref mut w) = local_ws_write {
+                                            w.send(Message::Text(sig_json.into())).await?;
+                                        }
                                         local_handshake_sent = true;
                                     }
                                 }
@@ -818,6 +836,8 @@ pub async fn run_sender(
                             }
                         }
                     }
+                } else {
+                    break;
                 }
             }
         }
@@ -987,6 +1007,7 @@ pub async fn run_stdin_sender(
     // Wait until endpoint has contacted the relay server to ensure our_node_addr contains routing info.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
     let our_node_addr = endpoint.addr();
+    println!("StdinSender: our_node_addr = {:?}", our_node_addr);
 
     let our_nonce: [u8; 32] = rand::random();
     let our_ephemeral = EphemeralKeyPair::generate();
@@ -1141,6 +1162,8 @@ pub async fn run_stdin_sender(
                             }
                         }
                     }
+                } else {
+                    break;
                 }
             }
         }

@@ -524,23 +524,27 @@ pub async fn run_receiver(
     // Wait until endpoint has contacted the relay server to ensure our_node_addr contains routing info.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
     let our_node_addr = endpoint.addr();
+    println!("Receiver: our_node_addr = {:?}", our_node_addr);
 
-    println!("Scanning local network for sender (mDNS)...");
+    let disable_mdns = std::env::var("ARC_DISABLE_MDNS").is_ok();
     let mut resolved_addr = None;
-    if let Ok(daemon) = mdns_sd::ServiceDaemon::new() {
-        let service_type = "_arc-transfer._tcp.local.";
-        if let Ok(receiver) = daemon.browse(service_type) {
-            let start = std::time::Instant::now();
-            let timeout = std::time::Duration::from_millis(1000);
-            while start.elapsed() < timeout {
-                if let Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) =
-                    receiver.recv_timeout(std::time::Duration::from_millis(100))
-                {
-                    if info.get_fullname().contains(&room_id[..32]) {
-                        let port = info.get_port();
-                        if let Some(ip) = info.get_addresses().iter().next() {
-                            resolved_addr = Some(std::net::SocketAddr::new(ip.to_ip_addr(), port));
-                            break;
+    if !disable_mdns {
+        println!("Scanning local network for sender (mDNS)...");
+        if let Ok(daemon) = mdns_sd::ServiceDaemon::new() {
+            let service_type = "_arc-transfer._tcp.local.";
+            if let Ok(receiver) = daemon.browse(service_type) {
+                let start = std::time::Instant::now();
+                let timeout = std::time::Duration::from_millis(1000);
+                while start.elapsed() < timeout {
+                    if let Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) =
+                        receiver.recv_timeout(std::time::Duration::from_millis(100))
+                    {
+                        if info.get_fullname().contains(&room_id[..32]) {
+                            let port = info.get_port();
+                            if let Some(ip) = info.get_addresses().iter().next() {
+                                resolved_addr = Some(std::net::SocketAddr::new(ip.to_ip_addr(), port));
+                                break;
+                            }
                         }
                     }
                 }
@@ -651,6 +655,8 @@ pub async fn run_receiver(
     };
     let sig_json = serde_json::to_string(&sig_req)?;
     ws_write.send(Message::Text(sig_json.into())).await?;
+    // Sleep to ensure the relay receives and forwards the signal before we close the WebSocket connection
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Perform DH key exchange
     let tx_ephemeral_pub = x25519_dalek::PublicKey::from(tx_payload.ephemeral_public);

@@ -291,35 +291,44 @@ pub async fn run_pairing_sender(
 
     let (identity, _) = crate::storage::get_or_create_identity()?;
 
-    // Start local relay and register via mDNS
-    let (local_port, shutdown_tx) = start_local_relay().await?;
-    let daemon = ServiceDaemon::new()?;
-    let local_ips = crate::transfer::discovery::get_local_ips();
-    let ip_to_use = local_ips
-        .first()
-        .copied()
-        .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
-    let service_type = "_arc-pair._tcp.local.";
-    let instance_name = room_id[..32].to_string();
-    let host_name = format!("{}.local.", instance_name);
-    let service_info = ServiceInfo::new(
-        service_type,
-        &instance_name,
-        &host_name,
-        ip_to_use,
-        local_port,
-        None,
-    )?;
-    daemon.register(service_info.clone())?;
+    let disable_mdns = std::env::var("ARC_DISABLE_MDNS").is_ok();
+    let mut local_relay = None;
+    let mut local_ws_write = None;
+    let mut local_ws_read = None;
 
-    let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
-    let local_ws = crate::connect_relay(&local_relay_url).await?;
-    let local_relay = Some((local_port, shutdown_tx, daemon, service_info));
+    if !disable_mdns {
+        // Start local relay and register via mDNS
+        let (local_port, shutdown_tx) = start_local_relay().await?;
+        let daemon = ServiceDaemon::new()?;
+        let local_ips = crate::transfer::discovery::get_local_ips();
+        let ip_to_use = local_ips
+            .first()
+            .copied()
+            .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+        let service_type = "_arc-pair._tcp.local.";
+        let instance_name = room_id[..32].to_string();
+        let host_name = format!("{}.local.", instance_name);
+        let service_info = ServiceInfo::new(
+            service_type,
+            &instance_name,
+            &host_name,
+            ip_to_use,
+            local_port,
+            None,
+        )?;
+        daemon.register(service_info.clone())?;
+
+        let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
+        let local_ws = crate::connect_relay(&local_relay_url).await?;
+        local_relay = Some((local_port, shutdown_tx, daemon, service_info));
+        let (w, r) = local_ws.split();
+        local_ws_write = Some(w);
+        local_ws_read = Some(r);
+    }
 
     // Connect to public relay in parallel
     let public_ws = crate::connect_relay(relay_url).await;
 
-    let (mut local_ws_write, mut local_ws_read) = local_ws.split();
     let (mut public_ws_write, mut public_ws_read) = match public_ws {
         Ok(stream) => {
             let (w, r) = stream.split();
@@ -335,11 +344,11 @@ pub async fn run_pairing_sender(
         max_members: Some(2),
     };
     let join_json = serde_json::to_string(&join_req)?;
-    local_ws_write
-        .send(Message::Text(join_json.clone().into()))
-        .await?;
+    if let Some(ref mut w) = local_ws_write {
+        w.send(Message::Text(join_json.clone().into())).await?;
+    }
     if let Some(ref mut w) = public_ws_write {
-        let _ = w.send(Message::Text(join_json.into())).await;
+        w.send(Message::Text(join_json.into())).await?;
     }
 
     // Wait for handshake
@@ -348,7 +357,13 @@ pub async fn run_pairing_sender(
 
     loop {
         tokio::select! {
-            local_msg = local_ws_read.next() => {
+            local_msg = async {
+                if let Some(ref mut r) = local_ws_read {
+                    r.next().await
+                } else {
+                    futures_util::future::pending().await
+                }
+            } => {
                 if let Some(msg_res) = local_msg {
                     let msg = msg_res?;
                     if let Message::Text(text) = msg {
@@ -356,7 +371,7 @@ pub async fn run_pairing_sender(
                             if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
                                 if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
                                     receiver_handshake = Some(payload);
-                                    ws_write_to_use = Some(local_ws_write);
+                                    ws_write_to_use = local_ws_write;
                                     break;
                                 }
                             }
@@ -394,6 +409,8 @@ pub async fn run_pairing_sender(
                             }
                         }
                     }
+                } else {
+                    break;
                 }
             }
         }
@@ -451,6 +468,8 @@ pub async fn run_pairing_sender(
     let sig_json = serde_json::to_string(&sig_req)?;
     if let Some(mut w) = ws_write_to_use {
         w.send(Message::Text(sig_json.into())).await?;
+        // Sleep to ensure the relay receives and forwards the signal before we close the WebSocket connection
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
     if let Some((_, shutdown_tx, daemon, service_info)) = local_relay {
@@ -471,22 +490,25 @@ pub async fn run_pairing_receiver(
 
     let (identity, _) = crate::storage::get_or_create_identity()?;
 
-    println!("Scanning local network for pairing partner (mDNS)...");
+    let disable_mdns = std::env::var("ARC_DISABLE_MDNS").is_ok();
     let mut resolved_addr = None;
-    if let Ok(daemon) = ServiceDaemon::new() {
-        let service_type = "_arc-pair._tcp.local.";
-        if let Ok(receiver) = daemon.browse(service_type) {
-            let start = std::time::Instant::now();
-            let timeout = Duration::from_millis(1000);
-            while start.elapsed() < timeout {
-                if let Ok(ServiceEvent::ServiceResolved(info)) =
-                    receiver.recv_timeout(Duration::from_millis(100))
-                {
-                    if info.get_fullname().contains(&room_id[..32]) {
-                        let port = info.get_port();
-                        if let Some(ip) = info.get_addresses().iter().next() {
-                            resolved_addr = Some(SocketAddr::new(ip.to_ip_addr(), port));
-                            break;
+    if !disable_mdns {
+        println!("Scanning local network for pairing partner (mDNS)...");
+        if let Ok(daemon) = ServiceDaemon::new() {
+            let service_type = "_arc-pair._tcp.local.";
+            if let Ok(receiver) = daemon.browse(service_type) {
+                let start = std::time::Instant::now();
+                let timeout = Duration::from_millis(1000);
+                while start.elapsed() < timeout {
+                    if let Ok(ServiceEvent::ServiceResolved(info)) =
+                        receiver.recv_timeout(Duration::from_millis(100))
+                    {
+                        if info.get_fullname().contains(&room_id[..32]) {
+                            let port = info.get_port();
+                            if let Some(ip) = info.get_addresses().iter().next() {
+                                resolved_addr = Some(SocketAddr::new(ip.to_ip_addr(), port));
+                                break;
+                            }
                         }
                     }
                 }
