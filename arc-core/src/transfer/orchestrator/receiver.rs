@@ -23,6 +23,7 @@ async fn run_quic_receiver_session(
     expected_peer_id: [u8; 32],
     progress_tx: Option<mpsc::Sender<(u32, u32)>>,
     stdout_tx: Option<mpsc::Sender<Vec<u8>>>,
+    sender_name: &str,
 ) -> Result<Option<String>, anyhow::Error> {
     let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
     use crate::protocol::state::{SessionState, next_state, validate_message_for_state};
@@ -178,6 +179,33 @@ async fn run_quic_receiver_session(
         "Incoming transfer over QUIC: '{}' ({} bytes, {} chunks)",
         file_name, total_size, chunk_count
     );
+
+    if stdout_tx.is_none() {
+        let size_str = if total_size > 1024 * 1024 * 1024 {
+            format!("{:.2} GB", total_size as f64 / (1024.0 * 1024.0 * 1024.0))
+        } else if total_size > 1024 * 1024 {
+            format!("{:.2} MB", total_size as f64 / (1024.0 * 1024.0))
+        } else {
+            format!("{} bytes", total_size)
+        };
+        let prompt_msg = format!(
+            "Do you want to accept transfer of '{}' ({}) from '{}'?",
+            file_name, size_str, sender_name
+        );
+        let accept_transfer = dialoguer::Confirm::new()
+            .with_prompt(&prompt_msg)
+            .default(true)
+            .interact()?;
+        
+        if !accept_transfer {
+            let abort = ArcMessage::TransferAbort {
+                transfer_id,
+                reason: crate::protocol::messages::AbortReason::UserCancelled,
+            };
+            let _ = send_msg_stream(&mut send_stream, &abort).await;
+            return Err(anyhow::anyhow!("Transfer rejected by user"));
+        }
+    }
 
     // Resolve absolute safe output path to prevent path traversal (SEC-2)
     let output_path = match crate::security::resolve_safe_path(Path::new(output_dir), &file_name) {
@@ -485,18 +513,47 @@ pub async fn run_receiver(
     let secret_key_bytes = identity.secret_bytes();
     let secret_key = iroh::SecretKey::from_bytes(&secret_key_bytes);
 
-    // Initialize Iroh endpoint
-    println!("Initializing Iroh endpoint...");
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
         .secret_key(secret_key)
         .alpns(vec![b"arc/1".to_vec()])
         .bind()
         .await?;
 
+    // Wait until endpoint has contacted the relay server to ensure our_node_addr contains routing info.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
     let our_node_addr = endpoint.addr();
 
-    println!("Connecting to relay at {}...", relay_url);
-    let ws_stream = crate::connect_relay(relay_url).await?;
+    println!("Scanning local network for sender (mDNS)...");
+    let mut resolved_addr = None;
+    if let Ok(daemon) = mdns_sd::ServiceDaemon::new() {
+        let service_type = "_arc-transfer._tcp.local.";
+        if let Ok(receiver) = daemon.browse(service_type) {
+            let start = std::time::Instant::now();
+            let timeout = std::time::Duration::from_millis(1000);
+            while start.elapsed() < timeout {
+                if let Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) =
+                    receiver.recv_timeout(std::time::Duration::from_millis(100))
+                {
+                    if info.get_fullname().contains(&room_id[..32]) {
+                        let port = info.get_port();
+                        if let Some(ip) = info.get_addresses().iter().next() {
+                            resolved_addr = Some(std::net::SocketAddr::new(ip.to_ip_addr(), port));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let ws_stream = if let Some(addr) = resolved_addr {
+        println!("mDNS peer found! Establishing direct local connection...");
+        let local_relay_url = format!("ws://{}:{}/ws", addr.ip(), addr.port());
+        crate::connect_relay(&local_relay_url).await?
+    } else {
+        println!("mDNS peer not found locally. Connecting to public relay at {}...", relay_url);
+        crate::connect_relay(relay_url).await?
+    };
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
     // Join room
@@ -620,6 +677,7 @@ pub async fn run_receiver(
         tx_payload.device_id,
         progress_tx.clone(),
         stdout_tx.clone(),
+        &tx_payload.device_name,
     )
     .await?;
 

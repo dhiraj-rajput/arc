@@ -284,43 +284,42 @@ pub async fn run_pairing_sender(
 
     let (identity, _) = crate::storage::get_or_create_identity()?;
 
-    let mut local_relay = None;
-    let ws_stream = match crate::connect_relay(relay_url).await {
-        Ok(stream) => stream,
-        Err(e) => {
-            tracing::warn!(
-                "Failed to connect to public relay: {}. Falling back to local network pairing...",
-                e
-            );
-            println!("Public relay unreachable. Falling back to local network pairing (mDNS)...");
+    // Start local relay and register via mDNS
+    let (local_port, shutdown_tx) = start_local_relay().await?;
+    let daemon = ServiceDaemon::new()?;
+    let local_ips = crate::transfer::discovery::get_local_ips();
+    let ip_to_use = local_ips
+        .first()
+        .copied()
+        .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+    let service_type = "_arc-pair._tcp.local.";
+    let instance_name = room_id[..32].to_string();
+    let host_name = format!("{}.local.", instance_name);
+    let service_info = ServiceInfo::new(
+        service_type,
+        &instance_name,
+        &host_name,
+        ip_to_use,
+        local_port,
+        None,
+    )?;
+    daemon.register(service_info.clone())?;
 
-            let (local_port, shutdown_tx) = start_local_relay().await?;
-            let daemon = ServiceDaemon::new()?;
-            let local_ips = crate::transfer::discovery::get_local_ips();
-            let ip_to_use = local_ips
-                .first()
-                .copied()
-                .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
-            let service_type = "_arc-pair._tcp.local.";
-            let instance_name = room_id[..32].to_string();
-            let host_name = format!("{}.local.", instance_name);
-            let service_info = ServiceInfo::new(
-                service_type,
-                &instance_name,
-                &host_name,
-                ip_to_use,
-                local_port,
-                None,
-            )?;
-            daemon.register(service_info.clone())?;
+    let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
+    let local_ws = crate::connect_relay(&local_relay_url).await?;
+    let mut local_relay = Some((local_port, shutdown_tx, daemon, service_info));
 
-            let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
-            let stream = crate::connect_relay(&local_relay_url).await?;
-            local_relay = Some((local_port, shutdown_tx, daemon, service_info));
-            stream
+    // Connect to public relay in parallel
+    let public_ws = crate::connect_relay(relay_url).await;
+
+    let (mut local_ws_write, mut local_ws_read) = local_ws.split();
+    let (mut public_ws_write, mut public_ws_read) = match public_ws {
+        Ok(stream) => {
+            let (w, r) = stream.split();
+            (Some(w), Some(r))
         }
+        Err(_) => (None, None),
     };
-    let (mut ws_write, mut ws_read) = ws_stream.split();
 
     // Join room
     let join_req = WsJoin {
@@ -329,29 +328,68 @@ pub async fn run_pairing_sender(
         max_members: Some(2),
     };
     let join_json = serde_json::to_string(&join_req)?;
-    ws_write.send(Message::Text(join_json.into())).await?;
+    local_ws_write.send(Message::Text(join_json.clone().into())).await?;
+    if let Some(ref mut w) = public_ws_write {
+        let _ = w.send(Message::Text(join_json.into())).await;
+    }
 
     // Wait for handshake
     let mut receiver_handshake: Option<HandshakePayload> = None;
-    while let Some(msg_res) = ws_read.next().await {
-        let msg = msg_res?;
-        if let Message::Text(text) = msg {
-            if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
-                match relay_msg {
-                    WsRelayMessage::Signal { data } => {
-                        if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                            if let Ok(payload) =
-                                serde_json::from_slice::<HandshakePayload>(&decrypted)
-                            {
-                                receiver_handshake = Some(payload);
-                                break;
+    let mut ws_write_to_use = None;
+
+    loop {
+        tokio::select! {
+            local_msg = local_ws_read.next() => {
+                if let Some(msg_res) = local_msg {
+                    let msg = msg_res?;
+                    if let Message::Text(text) = msg {
+                        if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
+                            match relay_msg {
+                                WsRelayMessage::Signal { data } => {
+                                    if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                                        if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                                            receiver_handshake = Some(payload);
+                                            ws_write_to_use = Some(local_ws_write);
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
-                    WsRelayMessage::RoomMemberCount { count, .. } if count > 2 => {
-                        return Err(anyhow::anyhow!("Relay MITM detected (members > 2)"));
+                } else {
+                    break;
+                }
+            }
+            public_msg = async {
+                if let Some(ref mut r) = public_ws_read {
+                    r.next().await
+                } else {
+                    futures_util::future::pending().await
+                }
+            } => {
+                if let Some(msg_res) = public_msg {
+                    let msg = msg_res?;
+                    if let Message::Text(text) = msg {
+                        if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
+                            match relay_msg {
+                                WsRelayMessage::Signal { data } => {
+                                    if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                                        if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                                            receiver_handshake = Some(payload);
+                                            ws_write_to_use = public_ws_write;
+                                            break;
+                                        }
+                                    }
+                                }
+                                WsRelayMessage::RoomMemberCount { count, .. } if count > 2 => {
+                                    return Err(anyhow::anyhow!("Relay MITM detected (members > 2)"));
+                                }
+                                _ => {}
+                            }
+                        }
                     }
-                    _ => {}
                 }
             }
         }
@@ -407,7 +445,9 @@ pub async fn run_pairing_sender(
         data: signal_data,
     };
     let sig_json = serde_json::to_string(&sig_req)?;
-    ws_write.send(Message::Text(sig_json.into())).await?;
+    if let Some(mut w) = ws_write_to_use {
+        w.send(Message::Text(sig_json.into())).await?;
+    }
 
     if let Some((_, shutdown_tx, daemon, service_info)) = local_relay {
         let _ = shutdown_tx.send(());
@@ -427,24 +467,13 @@ pub async fn run_pairing_receiver(
 
     let (identity, _) = crate::storage::get_or_create_identity()?;
 
-    let ws_stream = match crate::connect_relay(relay_url).await {
-        Ok(stream) => stream,
-        Err(e) => {
-            tracing::warn!(
-                "Failed to connect to public relay: {}. Falling back to local network pairing...",
-                e
-            );
-            println!(
-                "Public relay unreachable. Scanning local network for pairing partner (mDNS)..."
-            );
-
-            let daemon = ServiceDaemon::new()?;
-            let service_type = "_arc-pair._tcp.local.";
-            let receiver = daemon.browse(service_type)?;
-
-            let mut resolved_addr = None;
+    println!("Scanning local network for pairing partner (mDNS)...");
+    let mut resolved_addr = None;
+    if let Ok(daemon) = ServiceDaemon::new() {
+        let service_type = "_arc-pair._tcp.local.";
+        if let Ok(receiver) = daemon.browse(service_type) {
             let start = std::time::Instant::now();
-            let timeout = Duration::from_secs(30);
+            let timeout = Duration::from_millis(1000);
             while start.elapsed() < timeout {
                 if let Ok(ServiceEvent::ServiceResolved(info)) =
                     receiver.recv_timeout(Duration::from_millis(100))
@@ -458,11 +487,16 @@ pub async fn run_pairing_receiver(
                     }
                 }
             }
-
-            let addr = resolved_addr.ok_or_else(|| anyhow::anyhow!("Pairing partner not found on local network. Ensure both devices are on the same Wi-Fi."))?;
-            let local_relay_url = format!("ws://{}:{}/ws", addr.ip(), addr.port());
-            crate::connect_relay(&local_relay_url).await?
         }
+    }
+
+    let ws_stream = if let Some(addr) = resolved_addr {
+        println!("mDNS pairing partner found! Establishing direct local connection...");
+        let local_relay_url = format!("ws://{}:{}/ws", addr.ip(), addr.port());
+        crate::connect_relay(&local_relay_url).await?
+    } else {
+        println!("mDNS pairing partner not found locally. Connecting to public relay at {}...", relay_url);
+        crate::connect_relay(relay_url).await?
     };
     let (mut ws_write, mut ws_read) = ws_stream.split();
 

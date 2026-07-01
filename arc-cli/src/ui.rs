@@ -449,8 +449,29 @@ pub fn prompt_file_path(
         // Subdirectories
         if selection < offset + subdirs.len() {
             let selected_dir = &subdirs[selection - offset];
-            current_dir = display_dir.join(selected_dir);
-            continue;
+            let full_path = display_dir.join(selected_dir);
+            if only_directories {
+                let choice = dialoguer::Select::with_theme(theme)
+                    .with_prompt(format!("Choose action for '{}'", selected_dir))
+                    .default(0)
+                    .items(&[
+                        &format!("💾 Save in '{}'", selected_dir),
+                        &format!("📁 Open folder '{}'", selected_dir),
+                        "❌ Cancel",
+                    ])
+                    .interact()?;
+                if choice == 0 {
+                    return Ok(full_path.to_string_lossy().to_string());
+                } else if choice == 1 {
+                    current_dir = full_path;
+                    continue;
+                } else {
+                    continue;
+                }
+            } else {
+                current_dir = full_path;
+                continue;
+            }
         }
         offset += subdirs.len();
 

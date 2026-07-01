@@ -655,33 +655,15 @@ pub async fn run_sender(
     let secret_key = iroh::SecretKey::from_bytes(&secret_key_bytes);
 
     // Initialize Iroh endpoint
-    println!("Initializing Iroh endpoint...");
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
         .secret_key(secret_key)
         .alpns(vec![b"arc/1".to_vec()])
         .bind()
         .await?;
 
+    // Wait until endpoint has contacted the relay server to ensure our_node_addr contains routing info.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
     let our_node_addr = endpoint.addr();
-
-    println!("Connecting to relay at {}...", relay_url);
-    let ws_stream = crate::connect_relay(relay_url).await?;
-    let (mut ws_write, mut ws_read) = ws_stream.split();
-
-    // Join room
-    let join_req = WsJoin {
-        r#type: "join",
-        room_id: room_id.clone(),
-        max_members: if share_mode { Some(10) } else { Some(2) },
-    };
-    let join_json = serde_json::to_string(&join_req)?;
-    ws_write.send(Message::Text(join_json.into())).await?;
-
-    println!("Waiting for receiver to join room...");
-
-    // Wait for room to have 2 members or wait for receiver's handshake
-    let mut receiver_handshake: Option<HandshakePayload> = None;
-    let mut handshake_sent = false;
 
     let our_nonce: [u8; 32] = rand::random();
     let our_ephemeral = EphemeralKeyPair::generate();
@@ -698,55 +680,146 @@ pub async fn run_sender(
         signature: Some(sig.to_vec()),
     };
 
-    while let Some(msg_res) = ws_read.next().await {
-        let msg = msg_res?;
-        if let Message::Text(text) = msg {
-            if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
-                match relay_msg {
-                    WsRelayMessage::Joined {
-                        member_count: 2, ..
-                    } => {
-                        if !handshake_sent {
-                            let handshake_bytes = serde_json::to_vec(&handshake_out)?;
-                            let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
-                            let sig_req = WsSignal {
-                                r#type: "signal",
-                                room_id: room_id.clone(),
-                                data: signal_data,
-                            };
-                            let sig_json = serde_json::to_string(&sig_req)?;
-                            ws_write.send(Message::Text(sig_json.into())).await?;
-                            handshake_sent = true;
-                        }
-                    }
-                    WsRelayMessage::RoomMemberCount { count, .. } => {
-                        if count > 2 && !share_mode {
-                            return Err(anyhow::anyhow!("Relay MITM detected (members > 2)"));
-                        }
-                        if count == 2 && !handshake_sent {
-                            let handshake_bytes = serde_json::to_vec(&handshake_out)?;
-                            let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
-                            let sig_req = WsSignal {
-                                r#type: "signal",
-                                room_id: room_id.clone(),
-                                data: signal_data,
-                            };
-                            let sig_json = serde_json::to_string(&sig_req)?;
-                            ws_write.send(Message::Text(sig_json.into())).await?;
-                            handshake_sent = true;
-                        }
-                    }
-                    WsRelayMessage::Signal { data } => {
-                        if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                            if let Ok(payload) =
-                                serde_json::from_slice::<HandshakePayload>(&decrypted)
-                            {
-                                receiver_handshake = Some(payload);
-                                break;
+    // Start local relay and register via mDNS
+    let mut local_relay = None;
+    let (local_port, shutdown_tx) = super::transport::start_local_relay().await?;
+    let daemon = mdns_sd::ServiceDaemon::new()?;
+    let local_ips = crate::transfer::discovery::get_local_ips();
+    let ip_to_use = local_ips
+        .first()
+        .copied()
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
+    let service_type = "_arc-transfer._tcp.local.";
+    let instance_name = room_id[..32].to_string();
+    let host_name = format!("{}.local.", instance_name);
+    let service_info = mdns_sd::ServiceInfo::new(
+        service_type,
+        &instance_name,
+        &host_name,
+        ip_to_use,
+        local_port,
+        None,
+    )?;
+    daemon.register(service_info.clone())?;
+    local_relay = Some((local_port, shutdown_tx, daemon, service_info));
+
+    let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
+    let local_ws = crate::connect_relay(&local_relay_url).await?;
+
+    // Connect to public relay in parallel
+    let public_ws = crate::connect_relay(relay_url).await;
+
+    let (mut local_ws_write, mut local_ws_read) = local_ws.split();
+    let (mut public_ws_write, mut public_ws_read) = match public_ws {
+        Ok(stream) => {
+            let (w, r) = stream.split();
+            (Some(w), Some(r))
+        }
+        Err(_) => (None, None),
+    };
+
+    // Join room
+    let join_req = WsJoin {
+        r#type: "join",
+        room_id: room_id.clone(),
+        max_members: if share_mode { Some(10) } else { Some(2) },
+    };
+    let join_json = serde_json::to_string(&join_req)?;
+    local_ws_write.send(Message::Text(join_json.clone().into())).await?;
+    if let Some(ref mut w) = public_ws_write {
+        let _ = w.send(Message::Text(join_json.into())).await;
+    }
+
+    println!("Waiting for receiver to join room...");
+
+    let mut receiver_handshake: Option<HandshakePayload> = None;
+    let mut ws_write_to_use = None;
+    let mut local_handshake_sent = false;
+    let mut public_handshake_sent = false;
+
+    loop {
+        tokio::select! {
+            local_msg = local_ws_read.next() => {
+                if let Some(msg_res) = local_msg {
+                    let msg = msg_res?;
+                    if let Message::Text(text) = msg {
+                        if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
+                            match relay_msg {
+                                WsRelayMessage::Joined { member_count, .. } | WsRelayMessage::RoomMemberCount { count: member_count, .. } => {
+                                    if member_count == 2 && !local_handshake_sent {
+                                        let handshake_bytes = serde_json::to_vec(&handshake_out)?;
+                                        let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
+                                        let sig_req = WsSignal {
+                                            r#type: "signal",
+                                            room_id: room_id.clone(),
+                                            data: signal_data,
+                                        };
+                                        let sig_json = serde_json::to_string(&sig_req)?;
+                                        local_ws_write.send(Message::Text(sig_json.into())).await?;
+                                        local_handshake_sent = true;
+                                    }
+                                }
+                                WsRelayMessage::Signal { data } => {
+                                    if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                                        if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                                            receiver_handshake = Some(payload);
+                                            ws_write_to_use = Some(local_ws_write);
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
-                    _ => {}
+                } else {
+                    break;
+                }
+            }
+            public_msg = async {
+                if let Some(ref mut r) = public_ws_read {
+                    r.next().await
+                } else {
+                    futures_util::future::pending().await
+                }
+            } => {
+                if let Some(msg_res) = public_msg {
+                    let msg = msg_res?;
+                    if let Message::Text(text) = msg {
+                        if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
+                            match relay_msg {
+                                WsRelayMessage::Joined { member_count, .. } | WsRelayMessage::RoomMemberCount { count: member_count, .. } => {
+                                    if member_count > 2 && !share_mode {
+                                        return Err(anyhow::anyhow!("Relay MITM detected (members > 2)"));
+                                    }
+                                    if member_count == 2 && !public_handshake_sent {
+                                        let handshake_bytes = serde_json::to_vec(&handshake_out)?;
+                                        let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
+                                        let sig_req = WsSignal {
+                                            r#type: "signal",
+                                            room_id: room_id.clone(),
+                                            data: signal_data,
+                                        };
+                                        let sig_json = serde_json::to_string(&sig_req)?;
+                                        if let Some(ref mut w) = public_ws_write {
+                                            let _ = w.send(Message::Text(sig_json.into())).await;
+                                        }
+                                        public_handshake_sent = true;
+                                    }
+                                }
+                                WsRelayMessage::Signal { data } => {
+                                    if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                                        if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                                            receiver_handshake = Some(payload);
+                                            ws_write_to_use = public_ws_write;
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -798,6 +871,14 @@ pub async fn run_sender(
         let _ = crate::storage::save_config(&updated_config);
     }
 
+    println!("Sender: Waiting for incoming QUIC connection over Iroh...");
+    let incoming = endpoint
+        .accept()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Iroh listener closed"))?;
+    let conn = incoming.await?;
+    println!("Sender: QUIC connection established over Iroh.");
+
     // Now start the transfer session!
     let is_dir = path.is_dir();
     let (_temp_path, offer_path) = if is_dir {
@@ -824,11 +905,17 @@ pub async fn run_sender(
     let compression = chunker.config.compression;
 
     // Calculate file hashes
-    let file_hash = if is_dir {
-        crate::crypto::hash::blake3_hash_dir(path)?
-    } else {
-        crate::crypto::hash::blake3_hash_file(&offer_path)?
-    };
+    println!("Calculating file hash...");
+    let path_clone = path.to_path_buf();
+    let offer_path_clone = offer_path.clone();
+    let file_hash = tokio::task::spawn_blocking(move || {
+        if is_dir {
+            crate::crypto::hash::blake3_hash_dir(&path_clone)
+        } else {
+            crate::crypto::hash::blake3_hash_file(&offer_path_clone)
+        }
+    })
+    .await??;
     let partial_hash = crate::crypto::hash::arc_fast_hash(&offer_path)?;
 
     let file_name = path
@@ -855,15 +942,7 @@ pub async fn run_sender(
         compression,
     };
 
-    println!("Sender: Waiting for incoming QUIC connection over Iroh...");
-    let incoming = endpoint
-        .accept()
-        .await
-        .ok_or_else(|| anyhow::anyhow!("Iroh listener closed"))?;
-    let conn = incoming.await?;
-    println!("Sender: QUIC connection established over Iroh.");
-
-    run_quic_sender_session(
+    let session_res = run_quic_sender_session(
         &conn,
         &offer_path,
         offer.clone(),
@@ -873,8 +952,14 @@ pub async fn run_sender(
         None,
         progress_tx.clone(),
     )
-    .await?;
+    .await;
 
+    if let Some((_, shutdown_tx, daemon, service_info)) = local_relay {
+        let _ = shutdown_tx.send(());
+        let _ = daemon.unregister(service_info.get_fullname());
+    }
+
+    session_res?;
     Ok(())
 }
 
@@ -895,33 +980,15 @@ pub async fn run_stdin_sender(
     let secret_key = iroh::SecretKey::from_bytes(&secret_key_bytes);
 
     // Initialize Iroh endpoint
-    println!("Initializing Iroh endpoint...");
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
         .secret_key(secret_key)
         .alpns(vec![b"arc/1".to_vec()])
         .bind()
         .await?;
 
+    // Wait until endpoint has contacted the relay server to ensure our_node_addr contains routing info.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
     let our_node_addr = endpoint.addr();
-
-    println!("Connecting to relay at {}...", relay_url);
-    let ws_stream = crate::connect_relay(relay_url).await?;
-    let (mut ws_write, mut ws_read) = ws_stream.split();
-
-    // Join room
-    let join_req = WsJoin {
-        r#type: "join",
-        room_id: room_id.clone(),
-        max_members: Some(2),
-    };
-    let join_json = serde_json::to_string(&join_req)?;
-    ws_write.send(Message::Text(join_json.into())).await?;
-
-    println!("Waiting for receiver to join room...");
-
-    // Wait for room to have 2 members or wait for receiver's handshake
-    let mut receiver_handshake: Option<HandshakePayload> = None;
-    let mut handshake_sent = false;
 
     let our_nonce: [u8; 32] = rand::random();
     let our_ephemeral = EphemeralKeyPair::generate();
@@ -938,55 +1005,146 @@ pub async fn run_stdin_sender(
         signature: Some(sig.to_vec()),
     };
 
-    while let Some(msg_res) = ws_read.next().await {
-        let msg = msg_res?;
-        if let Message::Text(text) = msg {
-            if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
-                match relay_msg {
-                    WsRelayMessage::Joined {
-                        member_count: 2, ..
-                    } => {
-                        if !handshake_sent {
-                            let handshake_bytes = serde_json::to_vec(&handshake_out)?;
-                            let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
-                            let sig_req = WsSignal {
-                                r#type: "signal",
-                                room_id: room_id.clone(),
-                                data: signal_data,
-                            };
-                            let sig_json = serde_json::to_string(&sig_req)?;
-                            ws_write.send(Message::Text(sig_json.into())).await?;
-                            handshake_sent = true;
-                        }
-                    }
-                    WsRelayMessage::RoomMemberCount { count, .. } => {
-                        if count > 2 {
-                            return Err(anyhow::anyhow!("Relay MITM detected (members > 2)"));
-                        }
-                        if count == 2 && !handshake_sent {
-                            let handshake_bytes = serde_json::to_vec(&handshake_out)?;
-                            let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
-                            let sig_req = WsSignal {
-                                r#type: "signal",
-                                room_id: room_id.clone(),
-                                data: signal_data,
-                            };
-                            let sig_json = serde_json::to_string(&sig_req)?;
-                            ws_write.send(Message::Text(sig_json.into())).await?;
-                            handshake_sent = true;
-                        }
-                    }
-                    WsRelayMessage::Signal { data } => {
-                        if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                            if let Ok(payload) =
-                                serde_json::from_slice::<HandshakePayload>(&decrypted)
-                            {
-                                receiver_handshake = Some(payload);
-                                break;
+    // Start local relay and register via mDNS
+    let mut local_relay = None;
+    let (local_port, shutdown_tx) = super::transport::start_local_relay().await?;
+    let daemon = mdns_sd::ServiceDaemon::new()?;
+    let local_ips = crate::transfer::discovery::get_local_ips();
+    let ip_to_use = local_ips
+        .first()
+        .copied()
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
+    let service_type = "_arc-transfer._tcp.local.";
+    let instance_name = room_id[..32].to_string();
+    let host_name = format!("{}.local.", instance_name);
+    let service_info = mdns_sd::ServiceInfo::new(
+        service_type,
+        &instance_name,
+        &host_name,
+        ip_to_use,
+        local_port,
+        None,
+    )?;
+    daemon.register(service_info.clone())?;
+    local_relay = Some((local_port, shutdown_tx, daemon, service_info));
+
+    let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
+    let local_ws = crate::connect_relay(&local_relay_url).await?;
+
+    // Connect to public relay in parallel
+    let public_ws = crate::connect_relay(relay_url).await;
+
+    let (mut local_ws_write, mut local_ws_read) = local_ws.split();
+    let (mut public_ws_write, mut public_ws_read) = match public_ws {
+        Ok(stream) => {
+            let (w, r) = stream.split();
+            (Some(w), Some(r))
+        }
+        Err(_) => (None, None),
+    };
+
+    // Join room
+    let join_req = WsJoin {
+        r#type: "join",
+        room_id: room_id.clone(),
+        max_members: Some(2),
+    };
+    let join_json = serde_json::to_string(&join_req)?;
+    local_ws_write.send(Message::Text(join_json.clone().into())).await?;
+    if let Some(ref mut w) = public_ws_write {
+        let _ = w.send(Message::Text(join_json.into())).await;
+    }
+
+    println!("Waiting for receiver to join room...");
+
+    let mut receiver_handshake: Option<HandshakePayload> = None;
+    let mut ws_write_to_use = None;
+    let mut local_handshake_sent = false;
+    let mut public_handshake_sent = false;
+
+    loop {
+        tokio::select! {
+            local_msg = local_ws_read.next() => {
+                if let Some(msg_res) = local_msg {
+                    let msg = msg_res?;
+                    if let Message::Text(text) = msg {
+                        if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
+                            match relay_msg {
+                                WsRelayMessage::Joined { member_count, .. } | WsRelayMessage::RoomMemberCount { count: member_count, .. } => {
+                                    if member_count == 2 && !local_handshake_sent {
+                                        let handshake_bytes = serde_json::to_vec(&handshake_out)?;
+                                        let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
+                                        let sig_req = WsSignal {
+                                            r#type: "signal",
+                                            room_id: room_id.clone(),
+                                            data: signal_data,
+                                        };
+                                        let sig_json = serde_json::to_string(&sig_req)?;
+                                        local_ws_write.send(Message::Text(sig_json.into())).await?;
+                                        local_handshake_sent = true;
+                                    }
+                                }
+                                WsRelayMessage::Signal { data } => {
+                                    if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                                        if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                                            receiver_handshake = Some(payload);
+                                            ws_write_to_use = Some(local_ws_write);
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
-                    _ => {}
+                } else {
+                    break;
+                }
+            }
+            public_msg = async {
+                if let Some(ref mut r) = public_ws_read {
+                    r.next().await
+                } else {
+                    futures_util::future::pending().await
+                }
+            } => {
+                if let Some(msg_res) = public_msg {
+                    let msg = msg_res?;
+                    if let Message::Text(text) = msg {
+                        if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
+                            match relay_msg {
+                                WsRelayMessage::Joined { member_count, .. } | WsRelayMessage::RoomMemberCount { count: member_count, .. } => {
+                                    if member_count > 2 {
+                                        return Err(anyhow::anyhow!("Relay MITM detected (members > 2)"));
+                                    }
+                                    if member_count == 2 && !public_handshake_sent {
+                                        let handshake_bytes = serde_json::to_vec(&handshake_out)?;
+                                        let signal_data = encrypt_signal(&phrase_seed, &handshake_bytes)?;
+                                        let sig_req = WsSignal {
+                                            r#type: "signal",
+                                            room_id: room_id.clone(),
+                                            data: signal_data,
+                                        };
+                                        let sig_json = serde_json::to_string(&sig_req)?;
+                                        if let Some(ref mut w) = public_ws_write {
+                                            let _ = w.send(Message::Text(sig_json.into())).await;
+                                        }
+                                        public_handshake_sent = true;
+                                    }
+                                }
+                                WsRelayMessage::Signal { data } => {
+                                    if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                                        if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                                            receiver_handshake = Some(payload);
+                                            ws_write_to_use = public_ws_write;
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1065,14 +1223,20 @@ pub async fn run_stdin_sender(
     let conn = incoming.await?;
     println!("Sender: QUIC connection established over Iroh.");
 
-    run_quic_stdin_sender_session(
+    let session_res = run_quic_stdin_sender_session(
         &conn,
         offer.clone(),
         &session_keys,
         rx_payload.device_id,
         progress_tx.clone(),
     )
-    .await?;
+    .await;
 
+    if let Some((_, shutdown_tx, daemon, service_info)) = local_relay {
+        let _ = shutdown_tx.send(());
+        let _ = daemon.unregister(service_info.get_fullname());
+    }
+
+    session_res?;
     Ok(())
 }
