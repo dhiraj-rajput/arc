@@ -224,7 +224,8 @@ mod tests {
         let session_id = 42u32;
         let suite = CipherSuite::ChaCha20Poly1305Blake3;
 
-        let mut pipeline = TransferPipeline::new(4, 1, CompressionAlgo::None, session_id, key, suite);
+        let mut pipeline =
+            TransferPipeline::new(4, 1, CompressionAlgo::None, session_id, key, suite);
 
         // Send one chunk
         let data = b"test pipeline data chunk".to_vec();
