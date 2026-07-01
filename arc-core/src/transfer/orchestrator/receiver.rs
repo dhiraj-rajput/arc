@@ -10,6 +10,7 @@ use crate::compression::decompress_with_limit;
 use crate::crypto::cipher::{CipherSuite, Direction, build_nonce, decrypt_chunk};
 use crate::crypto::identity::EphemeralKeyPair;
 use crate::protocol::messages::{ArcMessage, TransferKind};
+use tracing::info;
 
 use super::transport::{
     HandshakePayload, WsJoin, WsRelayMessage, WsSignal, decrypt_signal, encrypt_signal,
@@ -529,12 +530,12 @@ pub async fn run_receiver(
     // Wait until endpoint has contacted the relay server to ensure our_node_addr contains routing info.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
     let our_node_addr = endpoint.addr();
-    println!("Receiver: our_node_addr = {:?}", our_node_addr);
+    info!(?our_node_addr, "Receiver local node address");
 
     let disable_mdns = std::env::var("ARC_DISABLE_MDNS").is_ok();
     let mut resolved_addr = None;
     if !disable_mdns {
-        println!("Scanning local network for sender (mDNS)...");
+        info!("Scanning local network for sender (mDNS)...");
         if let Ok(daemon) = mdns_sd::ServiceDaemon::new() {
             let service_type = "_arc-transfer._tcp.local.";
             if let Ok(receiver) = daemon.browse(service_type) {
@@ -559,14 +560,11 @@ pub async fn run_receiver(
     }
 
     let ws_stream = if let Some(addr) = resolved_addr {
-        println!("mDNS peer found! Establishing direct local connection...");
+        info!("mDNS peer found; establishing direct local connection...");
         let local_relay_url = format!("ws://{}:{}/ws", addr.ip(), addr.port());
         crate::connect_relay(&local_relay_url).await?
     } else {
-        println!(
-            "mDNS peer not found locally. Connecting to public relay at {}...",
-            relay_url
-        );
+        info!(%relay_url, "mDNS peer not found locally; connecting to public relay");
         crate::connect_relay(relay_url).await?
     };
     let (mut ws_write, mut ws_read) = ws_stream.split();
@@ -580,7 +578,7 @@ pub async fn run_receiver(
     let join_json = serde_json::to_string(&join_req)?;
     ws_write.send(Message::Text(join_json.into())).await?;
 
-    println!("Waiting for sender to join room...");
+    info!("Waiting for sender to join room...");
 
     // Wait for handshake payload from sender
     let mut sender_handshake: Option<HandshakePayload> = None;
@@ -633,7 +631,7 @@ pub async fn run_receiver(
         return Err(anyhow::anyhow!("Missing handshake signature from sender"));
     }
 
-    println!("Sender '{}' connected.", tx_payload.device_name);
+    info!(device_name = %tx_payload.device_name, "Sender connected");
 
     // Generate our X25519 ephemeral keypair
     let our_ephemeral = EphemeralKeyPair::generate();
@@ -683,14 +681,14 @@ pub async fn run_receiver(
         let _ = crate::storage::save_config(&updated_config);
     }
 
-    println!("Receiver: Connecting to sender over Iroh P2P...");
+    info!("Receiver is connecting to sender over Iroh P2P...");
     let conn = tokio::time::timeout(
         std::time::Duration::from_secs(120),
         endpoint.connect(tx_payload.node_addr, b"arc/1"),
     )
     .await
     .map_err(|_| anyhow::anyhow!("Timeout connecting to sender"))??;
-    println!("Receiver: QUIC connection established over Iroh.");
+    info!("Receiver QUIC connection established over Iroh");
 
     let clipboard_res = run_quic_receiver_session(
         &conn,

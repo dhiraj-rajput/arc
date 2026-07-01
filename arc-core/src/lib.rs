@@ -24,6 +24,8 @@ pub use config::{get_identity_with_merged_config, load_merged_config};
 pub use crypto::hash::{blake3_hash_dir, blake3_hash_file};
 pub use machine::MachineCapacity;
 pub use protocol::messages::ArcMessage;
+use tracing::warn;
+
 pub use security::{SandboxPolicy, safe_display_name, safe_unpack_tar, validate_path_component};
 pub use storage::{
     ArcConfig, ENV_CONFIG_DIR, PeerInfo, TransferHistoryEntry, add_transfer_history, get_db_conn,
@@ -56,7 +58,7 @@ pub async fn connect_relay(
                         e
                     ));
                 }
-                println!(
+                warn!(
                     "Relay connection attempt {} failed ({}). Retrying in 1s...",
                     attempts, e
                 );

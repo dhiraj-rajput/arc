@@ -10,9 +10,11 @@ use uuid::Uuid;
 use crate::compression::CompressionAlgo;
 use crate::crypto::cipher::CipherSuite;
 use crate::crypto::identity::EphemeralKeyPair;
+use crate::machine::MachineCapacity;
 use crate::protocol::messages::{ArcMessage, TransferKind};
 use crate::transfer::chunker::AdaptiveChunker;
 use crate::transfer::pipeline::{RawChunk, TransferPipeline};
+use tracing::info;
 
 use super::transport::{
     HandshakePayload, RateLimiter, WsJoin, WsRelayMessage, WsSignal, decrypt_signal,
@@ -168,7 +170,7 @@ async fn run_quic_sender_session(
         _ => return Err(anyhow::anyhow!("Expected TransferAccept or TransferReject")),
     };
 
-    println!("Transfer accepted over QUIC. Starting chunk stream...");
+    info!("Transfer accepted over QUIC; starting chunk stream");
 
     // Create the pipeline
     let session_id = session_keys.session_id;
@@ -179,6 +181,7 @@ async fn run_quic_sender_session(
     };
     let mut pipeline = TransferPipeline::new(
         chunker.config.pipeline_buffers,
+        chunker.config.parallel_streams,
         compression,
         session_id,
         session_keys.sender_key,
@@ -473,13 +476,15 @@ async fn run_quic_stdin_sender_session(
         _ => return Err(anyhow::anyhow!("Expected TransferAccept or TransferReject")),
     };
 
-    println!("Stdin transfer accepted over QUIC. Starting chunk stream...");
+    info!("Stdin transfer accepted over QUIC; starting chunk stream");
 
     // Create the pipeline
     let session_id = session_keys.session_id;
     let suite = CipherSuite::ChaCha20Poly1305Blake3;
+    let worker_count = MachineCapacity::detect().optimal_parallel_chunks(false);
     let mut pipeline = TransferPipeline::new(
         4,
+        worker_count,
         CompressionAlgo::None,
         session_id,
         session_keys.sender_key,
@@ -664,7 +669,7 @@ pub async fn run_sender(
     // Wait until endpoint has contacted the relay server to ensure our_node_addr contains routing info.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
     let our_node_addr = endpoint.addr();
-    println!("Sender: our_node_addr = {:?}", our_node_addr);
+    info!(?our_node_addr, "Sender local node address");
 
     let our_nonce: [u8; 32] = rand::random();
     let our_ephemeral = EphemeralKeyPair::generate();
@@ -927,7 +932,7 @@ pub async fn run_sender(
     let compression = chunker.config.compression;
 
     // Calculate file hashes
-    println!("Calculating file hash...");
+    info!("Calculating file hash...");
     let path_clone = path.to_path_buf();
     let offer_path_clone = offer_path.clone();
     let file_hash = tokio::task::spawn_blocking(move || {
@@ -1011,7 +1016,7 @@ pub async fn run_stdin_sender(
     // Wait until endpoint has contacted the relay server to ensure our_node_addr contains routing info.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
     let our_node_addr = endpoint.addr();
-    println!("StdinSender: our_node_addr = {:?}", our_node_addr);
+    info!(?our_node_addr, "Stdin sender local node address");
 
     let our_nonce: [u8; 32] = rand::random();
     let our_ephemeral = EphemeralKeyPair::generate();

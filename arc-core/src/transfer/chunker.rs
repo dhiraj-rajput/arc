@@ -4,6 +4,7 @@
 use crate::compression::{CompressionAlgo, probe_compressibility};
 use crate::crypto::hash::blake3_hash_parallel;
 use crate::machine::MachineCapacity;
+use memmap2::MmapOptions;
 use std::path::Path;
 
 /// A single chunk of file data, ready to be compressed and encrypted.

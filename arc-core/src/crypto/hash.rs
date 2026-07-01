@@ -150,7 +150,7 @@ pub fn blake3_hash_dir(dir: &Path) -> io::Result<[u8; 32]> {
     // Sort by relative path to ensure deterministic order
     file_entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let hashes = file_entries
+    let row_hashes = file_entries
         .par_iter()
         .map(|(rel_path, path, file_len)| {
             let file_hash = blake3_hash_file(path)?;
@@ -159,16 +159,16 @@ pub fn blake3_hash_dir(dir: &Path) -> io::Result<[u8; 32]> {
             hasher.update(&[0u8]);
             hasher.update(&file_len.to_le_bytes());
             hasher.update(&file_hash);
-            Ok(hasher.finalize().as_bytes().to_vec())
+            Ok(*hasher.finalize().as_bytes())
         })
         .collect::<io::Result<Vec<_>>>()?;
 
-    let mut concat = Vec::with_capacity(hashes.len() * (32 + 32 + 8));
-    for hash in hashes {
-        concat.extend_from_slice(&hash);
+    let mut final_hasher = blake3::Hasher::new();
+    for row_hash in row_hashes {
+        final_hasher.update(&row_hash);
     }
 
-    Ok(*blake3::hash(&concat).as_bytes())
+    Ok(*final_hasher.finalize().as_bytes())
 }
 
 // ─── Merkle Tree ──────────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 
 use crate::crypto::identity::DeviceId;
 use crate::protocol::messages::ArcMessage;
+use tracing::{debug, info, warn};
 
 pub(crate) async fn send_msg_stream<S>(
     stream: &mut S,
@@ -177,11 +178,11 @@ pub(crate) async fn start_local_relay()
             tokio::select! {
                 conn_res = listener.accept() => {
                     if let Ok((stream, _)) = conn_res {
-                        println!("Relay: Accepted TCP connection");
+                        debug!("Relay accepted TCP connection");
                         let rooms_clone = rooms.clone();
                         tokio::spawn(async move {
                             if let Ok(ws_stream) = accept_async(stream).await {
-                                println!("Relay: Upgraded WebSocket connection");
+                                debug!("Relay upgraded WebSocket connection");
                                 let (mut ws_write, mut ws_read) = ws_stream.split();
                                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -207,7 +208,7 @@ pub(crate) async fn start_local_relay()
                                                                 let mut rooms_guard = rooms_clone.lock().unwrap();
                                                                 let entry = rooms_guard.entry(room_id.clone()).or_insert_with(|| LocalRoom { members: Vec::new() });
                                                                 if entry.members.len() >= 2 {
-                                                                    println!("Relay: Room {} is full", room_id);
+                                                                    warn!(room_id = %room_id, "Relay room is full");
                                                                     if let Ok(err) = serde_json::to_string(&WsRelayMessage::Error { message: "room full".to_string() }) {
                                                                         let _ = tx.send(Message::Text(err.into()));
                                                                     }
@@ -216,7 +217,7 @@ pub(crate) async fn start_local_relay()
                                                                     entry.members.push(Member { id: member_id, tx: tx.clone() });
                                                                     let member_count = entry.members.len() as u8;
                                                                     current_room = Some((room_id.clone(), member_id));
-                                                                    println!("Relay: Client joined room {}, member_count: {}", room_id, member_count);
+                                                                    debug!(room_id = %room_id, member_count, "Relay client joined room");
 
                                                                     if let Ok(joined) = serde_json::to_string(&WsRelayMessage::Joined { room_id: room_id.clone(), member_count }) {
                                                                         let _ = tx.send(Message::Text(joined.into()));
@@ -232,7 +233,7 @@ pub(crate) async fn start_local_relay()
                                                         }
                                                         "signal" => {
                                                             if let Some(data) = val.get("data").and_then(|v| v.as_str()) {
-                                                                println!("Relay: Signal received in room {:?}", current_room);
+                                                                debug!(room = ?current_room, "Relay signal received");
                                                                 let rooms_guard = rooms_clone.lock().unwrap();
                                                                 if let Some((room_id, my_id)) = &current_room {
                                                                     if let Some(room) = rooms_guard.get(room_id) {
@@ -496,7 +497,7 @@ pub async fn run_pairing_receiver(
     let disable_mdns = std::env::var("ARC_DISABLE_MDNS").is_ok();
     let mut resolved_addr = None;
     if !disable_mdns {
-        println!("Scanning local network for pairing partner (mDNS)...");
+        info!("Scanning local network for pairing partner (mDNS)...");
         if let Ok(daemon) = ServiceDaemon::new() {
             let service_type = "_arc-pair._tcp.local.";
             if let Ok(receiver) = daemon.browse(service_type) {
@@ -520,7 +521,7 @@ pub async fn run_pairing_receiver(
     }
 
     let ws_stream = if let Some(addr) = resolved_addr {
-        println!("mDNS pairing partner found! Establishing direct local connection...");
+        info!("mDNS pairing partner found; establishing direct local connection...");
         let local_relay_url = format!("ws://{}:{}/ws", addr.ip(), addr.port());
         crate::connect_relay(&local_relay_url).await?
     } else {

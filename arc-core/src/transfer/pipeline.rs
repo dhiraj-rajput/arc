@@ -90,59 +90,91 @@ impl TransferPipeline {
     /// - `suite`: cipher suite to use
     pub fn new(
         capacity: usize,
+        worker_count: usize,
         compression: CompressionAlgo,
         session_id: u32,
         session_key: [u8; 32],
         suite: CipherSuite,
     ) -> Self {
+        let worker_count = worker_count.max(1);
         let (raw_tx, raw_rx) = mpsc::channel::<RawChunk>(capacity);
         let (comp_tx, comp_rx) = mpsc::channel::<CompressedChunkData>(capacity);
         let (ready_tx, ready_rx) = mpsc::channel::<ReadyChunk>(capacity * 16);
 
-        // Stage 1: Compress
-        tokio::spawn(async move {
-            let mut rx = raw_rx;
-            while let Some(raw) = rx.recv().await {
-                let original_hash = blake3_hash_parallel(&raw.data);
-                let compressed = match compress(&raw.data, compression, 3) {
-                    Ok(c) => c,
-                    Err(_) => continue, // log error in production
-                };
-                let _ = comp_tx
-                    .send(CompressedChunkData {
-                        index: raw.index,
-                        original_hash,
-                        compressed,
-                        algorithm: compression,
-                        is_last: raw.is_last,
-                    })
-                    .await;
-            }
-        });
+        let raw_rx = std::sync::Arc::new(tokio::sync::Mutex::new(raw_rx));
+        for _ in 0..worker_count {
+            let raw_rx = raw_rx.clone();
+            let comp_tx = comp_tx.clone();
+            tokio::spawn(async move {
+                loop {
+                    let raw = {
+                        let mut rx = raw_rx.lock().await;
+                        rx.recv().await
+                    };
+                    let raw = match raw {
+                        Some(raw) => raw,
+                        None => break,
+                    };
 
-        // Stage 2: Encrypt + send to ready queue
-        tokio::spawn(async move {
-            let mut rx = comp_rx;
-            let mut message_index = 0u32;
-            while let Some(chunk) = rx.recv().await {
-                let nonce = build_nonce(session_id, message_index, Direction::ToReceiver);
-                message_index += 1;
+                    let original_hash = blake3_hash_parallel(&raw.data);
+                    let compressed = match compress(&raw.data, compression, 3) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::error!(index = raw.index, ?e, "Compression failed");
+                            continue;
+                        }
+                    };
+                    let _ = comp_tx
+                        .send(CompressedChunkData {
+                            index: raw.index,
+                            original_hash,
+                            compressed,
+                            algorithm: compression,
+                            is_last: raw.is_last,
+                        })
+                        .await;
+                }
+            });
+        }
 
-                let encrypted = match encrypt_chunk(&session_key, &nonce, &chunk.compressed, suite)
-                {
-                    Ok(e) => e,
-                    Err(_) => continue, // log error in production
-                };
-                let _ = ready_tx
-                    .send(ReadyChunk {
-                        index: chunk.index,
-                        original_hash: chunk.original_hash,
-                        encrypted,
-                        is_last: chunk.is_last,
-                    })
-                    .await;
-            }
-        });
+        let comp_rx = std::sync::Arc::new(tokio::sync::Mutex::new(comp_rx));
+        for _ in 0..worker_count {
+            let comp_rx = comp_rx.clone();
+            let ready_tx = ready_tx.clone();
+            tokio::spawn(async move {
+                let mut message_index = 0u32;
+                loop {
+                    let chunk = {
+                        let mut rx = comp_rx.lock().await;
+                        rx.recv().await
+                    };
+                    let chunk = match chunk {
+                        Some(chunk) => chunk,
+                        None => break,
+                    };
+
+                    let nonce = build_nonce(session_id, message_index, Direction::ToReceiver);
+                    message_index += 1;
+
+                    let encrypted =
+                        match encrypt_chunk(&session_key, &nonce, &chunk.compressed, suite) {
+                            Ok(e) => e,
+                            Err(e) => {
+                                tracing::error!(index = chunk.index, ?e, "Encryption failed");
+                                continue;
+                            }
+                        };
+                    let _ = ready_tx
+                        .send(ReadyChunk {
+                            index: chunk.index,
+                            original_hash: chunk.original_hash,
+                            encrypted,
+                            is_last: chunk.is_last,
+                        })
+                        .await;
+                }
+            });
+        }
 
         TransferPipeline {
             compress_tx: Some(raw_tx),
@@ -192,7 +224,7 @@ mod tests {
         let session_id = 42u32;
         let suite = CipherSuite::ChaCha20Poly1305Blake3;
 
-        let mut pipeline = TransferPipeline::new(4, CompressionAlgo::None, session_id, key, suite);
+        let mut pipeline = TransferPipeline::new(4, 1, CompressionAlgo::None, session_id, key, suite);
 
         // Send one chunk
         let data = b"test pipeline data chunk".to_vec();
@@ -223,6 +255,7 @@ mod tests {
         let key = generate_key();
         let mut pipeline = TransferPipeline::new(
             4,
+            1,
             CompressionAlgo::Zstd,
             1,
             key,
