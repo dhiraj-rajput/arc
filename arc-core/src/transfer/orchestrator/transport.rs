@@ -343,18 +343,13 @@ pub async fn run_pairing_sender(
                 if let Some(msg_res) = local_msg {
                     let msg = msg_res?;
                     if let Message::Text(text) = msg {
-                        if let Ok(relay_msg) = serde_json::from_str::<WsRelayMessage>(&text) {
-                            match relay_msg {
-                                WsRelayMessage::Signal { data } => {
-                                    if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
-                                        if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
-                                            receiver_handshake = Some(payload);
-                                            ws_write_to_use = Some(local_ws_write);
-                                            break;
-                                        }
-                                    }
+                        if let Ok(WsRelayMessage::Signal { data }) = serde_json::from_str::<WsRelayMessage>(&text) {
+                            if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
+                                if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
+                                    receiver_handshake = Some(payload);
+                                    ws_write_to_use = Some(local_ws_write);
+                                    break;
                                 }
-                                _ => {}
                             }
                         }
                     }
