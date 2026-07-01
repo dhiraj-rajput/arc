@@ -109,7 +109,7 @@ fn test_relay_status_online() {
         .args(["relay", "status"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("ONLINE"));
+        .stdout(predicate::str::contains("Relay is online"));
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn test_relay_status_offline() {
         .args(["relay", "status"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("OFFLINE"));
+        .stdout(predicate::str::contains("Relay is offline"));
 }
 
 #[test]
