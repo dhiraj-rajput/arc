@@ -165,7 +165,7 @@ struct LocalRoom {
     members: Vec<Member>,
 }
 
-async fn start_local_relay() -> Result<(u16, tokio::sync::oneshot::Sender<()>), anyhow::Error> {
+pub(crate) async fn start_local_relay() -> Result<(u16, tokio::sync::oneshot::Sender<()>), anyhow::Error> {
     let listener = TcpListener::bind("0.0.0.0:0").await?;
     let local_port = listener.local_addr()?.port();
     let rooms: Arc<Mutex<HashMap<String, LocalRoom>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -307,7 +307,7 @@ pub async fn run_pairing_sender(
 
     let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
     let local_ws = crate::connect_relay(&local_relay_url).await?;
-    let mut local_relay = Some((local_port, shutdown_tx, daemon, service_info));
+    let local_relay = Some((local_port, shutdown_tx, daemon, service_info));
 
     // Connect to public relay in parallel
     let public_ws = crate::connect_relay(relay_url).await;

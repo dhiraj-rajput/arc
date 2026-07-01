@@ -681,7 +681,6 @@ pub async fn run_sender(
     };
 
     // Start local relay and register via mDNS
-    let mut local_relay = None;
     let (local_port, shutdown_tx) = super::transport::start_local_relay().await?;
     let daemon = mdns_sd::ServiceDaemon::new()?;
     let local_ips = crate::transfer::discovery::get_local_ips();
@@ -701,7 +700,7 @@ pub async fn run_sender(
         None,
     )?;
     daemon.register(service_info.clone())?;
-    local_relay = Some((local_port, shutdown_tx, daemon, service_info));
+    let local_relay = Some((local_port, shutdown_tx, daemon, service_info));
 
     let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
     let local_ws = crate::connect_relay(&local_relay_url).await?;
@@ -733,7 +732,6 @@ pub async fn run_sender(
     println!("Waiting for receiver to join room...");
 
     let mut receiver_handshake: Option<HandshakePayload> = None;
-    let mut ws_write_to_use = None;
     let mut local_handshake_sent = false;
     let mut public_handshake_sent = false;
 
@@ -763,7 +761,6 @@ pub async fn run_sender(
                                     if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
                                         if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
                                             receiver_handshake = Some(payload);
-                                            ws_write_to_use = Some(local_ws_write);
                                             break;
                                         }
                                     }
@@ -811,7 +808,6 @@ pub async fn run_sender(
                                     if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
                                         if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
                                             receiver_handshake = Some(payload);
-                                            ws_write_to_use = public_ws_write;
                                             break;
                                         }
                                     }
@@ -1006,7 +1002,6 @@ pub async fn run_stdin_sender(
     };
 
     // Start local relay and register via mDNS
-    let mut local_relay = None;
     let (local_port, shutdown_tx) = super::transport::start_local_relay().await?;
     let daemon = mdns_sd::ServiceDaemon::new()?;
     let local_ips = crate::transfer::discovery::get_local_ips();
@@ -1026,7 +1021,7 @@ pub async fn run_stdin_sender(
         None,
     )?;
     daemon.register(service_info.clone())?;
-    local_relay = Some((local_port, shutdown_tx, daemon, service_info));
+    let local_relay = Some((local_port, shutdown_tx, daemon, service_info));
 
     let local_relay_url = format!("ws://127.0.0.1:{}/ws", local_port);
     let local_ws = crate::connect_relay(&local_relay_url).await?;
@@ -1058,7 +1053,6 @@ pub async fn run_stdin_sender(
     println!("Waiting for receiver to join room...");
 
     let mut receiver_handshake: Option<HandshakePayload> = None;
-    let mut ws_write_to_use = None;
     let mut local_handshake_sent = false;
     let mut public_handshake_sent = false;
 
@@ -1088,7 +1082,6 @@ pub async fn run_stdin_sender(
                                     if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
                                         if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
                                             receiver_handshake = Some(payload);
-                                            ws_write_to_use = Some(local_ws_write);
                                             break;
                                         }
                                     }
@@ -1136,7 +1129,6 @@ pub async fn run_stdin_sender(
                                     if let Ok(decrypted) = decrypt_signal(&phrase_seed, &data) {
                                         if let Ok(payload) = serde_json::from_slice::<HandshakePayload>(&decrypted) {
                                             receiver_handshake = Some(payload);
-                                            ws_write_to_use = public_ws_write;
                                             break;
                                         }
                                     }
