@@ -180,7 +180,7 @@ async fn run_quic_receiver_session(
         file_name, total_size, chunk_count
     );
 
-use std::io::IsTerminal;
+    use std::io::IsTerminal;
 
     if stdout_tx.is_none() && std::io::stdin().is_terminal() {
         let size_str = if total_size > 1024 * 1024 * 1024 {
