@@ -454,7 +454,7 @@ pub fn prompt_file_path(
                 let choice = dialoguer::Select::with_theme(theme)
                     .with_prompt(format!("Choose action for '{}'", selected_dir))
                     .default(0)
-                    .items(&[
+                    .items([
                         &format!("💾 Save in '{}'", selected_dir),
                         &format!("📁 Open folder '{}'", selected_dir),
                         "❌ Cancel",
