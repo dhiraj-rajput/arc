@@ -681,7 +681,7 @@ pub async fn run_receiver(
     println!("Receiver: Connecting to sender over Iroh P2P...");
     let conn = tokio::time::timeout(
         std::time::Duration::from_secs(120),
-        endpoint.connect(tx_payload.node_addr, b"arc/1")
+        endpoint.connect(tx_payload.node_addr, b"arc/1"),
     )
     .await
     .map_err(|_| anyhow::anyhow!("Timeout connecting to sender"))??;
