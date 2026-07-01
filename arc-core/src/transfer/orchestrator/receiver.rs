@@ -542,7 +542,8 @@ pub async fn run_receiver(
                         if info.get_fullname().contains(&room_id[..32]) {
                             let port = info.get_port();
                             if let Some(ip) = info.get_addresses().iter().next() {
-                                resolved_addr = Some(std::net::SocketAddr::new(ip.to_ip_addr(), port));
+                                resolved_addr =
+                                    Some(std::net::SocketAddr::new(ip.to_ip_addr(), port));
                                 break;
                             }
                         }
