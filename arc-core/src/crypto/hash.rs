@@ -18,6 +18,8 @@
 //! enabling sub-millisecond "is this file already there?" checks before committing
 //! to a full BLAKE3 hash of the entire file.
 
+use memmap2::MmapOptions;
+use rayon::prelude::*;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -40,6 +42,23 @@ pub fn blake3_hash_parallel(data: &[u8]) -> [u8; 32] {
 /// Reads the file in 1 MiB chunks. Safe for files of any size.
 pub fn blake3_hash_file(path: &Path) -> io::Result<[u8; 32]> {
     let mut file = std::fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    let file_len = metadata.len();
+
+    if file_len == 0 {
+        return Ok(*blake3::hash(&[]).as_bytes());
+    }
+
+    if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
+        let mut hasher = blake3::Hasher::new();
+        if mmap.len() > 2 * 1024 * 1024 {
+            hasher.update_rayon(&mmap);
+        } else {
+            hasher.update(&mmap);
+        }
+        return Ok(*hasher.finalize().as_bytes());
+    }
+
     let mut hasher = blake3::Hasher::new();
     let mut buf = vec![0u8; 1024 * 1024]; // 1 MiB read buffer
 
@@ -97,7 +116,7 @@ pub fn blake3_hash_dir(dir: &Path) -> io::Result<[u8; 32]> {
     fn visit_dirs(
         dir: &Path,
         base: &Path,
-        entries: &mut Vec<(String, [u8; 32])>,
+        entries: &mut Vec<(String, std::path::PathBuf, u64)>,
     ) -> io::Result<()> {
         if dir.is_dir() {
             for entry in std::fs::read_dir(dir)? {
@@ -113,14 +132,14 @@ pub fn blake3_hash_dir(dir: &Path) -> io::Result<[u8; 32]> {
 
                 if path.is_dir() {
                     visit_dirs(&path, base, entries)?;
-                } else {
+                } else if path.is_file() {
                     let rel_path = path
                         .strip_prefix(base)
                         .unwrap_or(&path)
                         .to_string_lossy()
-                        .to_string();
-                    let hash = blake3_hash_file(&path)?;
-                    entries.push((rel_path, hash));
+                        .replace(std::path::MAIN_SEPARATOR, "/");
+                    let file_len = std::fs::metadata(&path)?.len();
+                    entries.push((rel_path, path, file_len));
                 }
             }
         }
@@ -131,9 +150,21 @@ pub fn blake3_hash_dir(dir: &Path) -> io::Result<[u8; 32]> {
     // Sort by relative path to ensure deterministic order
     file_entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Concat all hashes
-    let mut concat = Vec::with_capacity(file_entries.len() * 32);
-    for (_, hash) in file_entries {
+    let hashes = file_entries
+        .par_iter()
+        .map(|(rel_path, path, file_len)| {
+            let file_hash = blake3_hash_file(path)?;
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(rel_path.as_bytes());
+            hasher.update(&[0u8]);
+            hasher.update(&file_len.to_le_bytes());
+            hasher.update(&file_hash);
+            Ok(hasher.finalize().as_bytes().to_vec())
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+
+    let mut concat = Vec::with_capacity(hashes.len() * (32 + 32 + 8));
+    for hash in hashes {
         concat.extend_from_slice(&hash);
     }
 

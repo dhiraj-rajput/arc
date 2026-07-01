@@ -57,7 +57,7 @@ pub async fn connect_relay(
                     ));
                 }
                 println!(
-                    "⚠️ Relay connection attempt {} failed ({}). Retrying in 1s...",
+                    "Relay connection attempt {} failed ({}). Retrying in 1s...",
                     attempts, e
                 );
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;

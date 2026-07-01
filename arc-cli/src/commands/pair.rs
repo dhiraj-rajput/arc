@@ -32,10 +32,10 @@ pub async fn exec_pair(
 
     if is_initiator {
         let pairing_code = code.unwrap_or_else(generate_phrase);
-        println!("\nPairing Initiated!");
-        println!("==================");
+        println!("\nPairing initiated");
+        println!("================");
         println!("Provide this membrane pairing code to your other device:");
-        println!("\n    👉 \x1b[1;36m{}\x1b[0m 👈\n", pairing_code);
+        println!("\n    {}\n", pairing_code);
         println!(
             "Membrane pairing code generated. Waiting for the other device to connect and authenticate..."
         );
@@ -64,7 +64,7 @@ pub async fn exec_pair(
                 .interact_text()?
         };
 
-        println!("\nPairing Joiner!");
+        println!("\nPairing joiner");
         println!("===============");
         println!("Connecting to relay and authenticating identity keys...");
 
@@ -79,7 +79,7 @@ async fn handle_approval_and_save(peer_id: [u8; 32], peer_name: String) -> anyho
     let mut approved = true;
 
     if std::io::stdin().is_terminal() {
-        println!("\n🤝 Incoming Device Pairing Request:");
+        println!("\nIncoming device pairing request:");
         println!("----------------------------------------");
         println!("  Device Name: {}", peer_name);
         println!("  Device ID:   {}", hex::encode(peer_id));
@@ -107,7 +107,7 @@ async fn handle_approval_and_save(peer_id: [u8; 32], peer_name: String) -> anyho
             arc_core::save_config(&config)?;
         }
         println!(
-            "\n🎉 Pairing completed successfully! Device '{}' is now authorized.",
+            "\nPairing completed successfully. Device '{}' is now authorized.",
             peer_name
         );
         Ok(())

@@ -47,18 +47,18 @@ pub async fn exec_receive(
     let clipboard_content = match result {
         Ok(content) => content,
         Err(e) => {
-            eprintln!("\n❌ Receive failed: {}", e);
+            eprintln!("\nReceive failed: {}", e);
             if e.to_string().contains("relay")
                 || e.to_string().contains("WebSocket")
                 || e.to_string().contains("connection")
             {
                 eprintln!(
-                    "💡 Tip: The relay server might be offline, or your device might not be connected to the internet."
+                    "Tip: The relay server might be offline, or your device might not be connected to the internet."
                 );
                 eprintln!("   Please check your network settings and try again.");
             } else if e.to_string().contains("MITM") {
                 eprintln!(
-                    "⚠️ Security Alert: Relay room integrity check failed (possible MITM eavesdropping attempt). Connection closed."
+                    "Security alert: relay room integrity check failed (possible MITM eavesdropping attempt). Connection closed."
                 );
             }
             return Err(e);

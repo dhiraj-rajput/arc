@@ -7,10 +7,10 @@ pub async fn exec_relay(relay_override: Option<String>) -> anyhow::Result<()> {
     println!("Checking connection and latency to relay {}...", url);
     match check_relay_status(url).await {
         Ok(latency) => {
-            println!("  ✅ Relay is ONLINE (Latency: {}ms)", latency.as_millis());
+            println!("Relay is online (latency: {}ms)", latency.as_millis());
         }
         Err(e) => {
-            println!("  ❌ Relay is OFFLINE or unreachable: {}", e);
+            println!("Relay is offline or unreachable: {}", e);
         }
     }
     Ok(())

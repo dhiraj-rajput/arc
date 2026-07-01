@@ -112,7 +112,7 @@ pub async fn exec_clipboard_sync(
                         let is_remote = payload.source_device_id != device_id;
                         if is_remote {
                             println!(
-                                "\n📋 Received Shared Clipboard Text:\n----------------------------------------\n{}\n----------------------------------------",
+                                "\nReceived shared clipboard text:\n----------------------------------------\n{}\n----------------------------------------",
                                 payload.text
                             );
                             if let Ok(mut ctx) = arboard::Clipboard::new() {

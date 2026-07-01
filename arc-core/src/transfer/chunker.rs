@@ -123,41 +123,63 @@ impl AdaptiveChunker {
             }]);
         }
 
-        let mut file = std::fs::File::open(path)?;
         let chunk_size = self.config.chunk_size as usize;
         let mut chunks = Vec::with_capacity(self.chunk_count as usize);
-
-        let mut buf = vec![0u8; chunk_size];
-        let mut index = 0u32;
         let total = self.chunk_count;
 
-        loop {
-            let mut bytes_read = 0;
-            while bytes_read < chunk_size {
-                match file.read(&mut buf[bytes_read..]) {
-                    Ok(0) => break, // EOF
-                    Ok(n) => bytes_read += n,
-                    Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                    Err(e) => return Err(e),
+        if self.config.use_mmap {
+            let file = std::fs::File::open(path)?;
+            let mmap = unsafe { MmapOptions::new().map(&file)? };
+            let mut index = 0u32;
+            let mut offset = 0usize;
+
+            while offset < mmap.len() {
+                let end = (offset + chunk_size).min(mmap.len());
+                let data = mmap[offset..end].to_vec();
+                let hash = blake3_hash_parallel(&data);
+                let is_last = index + 1 == total;
+                chunks.push(FileChunk {
+                    index,
+                    hash,
+                    data,
+                    is_last,
+                });
+                index += 1;
+                offset = end;
+            }
+        } else {
+            let mut file = std::fs::File::open(path)?;
+            let mut buf = vec![0u8; chunk_size];
+            let mut index = 0u32;
+
+            loop {
+                let mut bytes_read = 0;
+                while bytes_read < chunk_size {
+                    match file.read(&mut buf[bytes_read..]) {
+                        Ok(0) => break, // EOF
+                        Ok(n) => bytes_read += n,
+                        Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(e) => return Err(e),
+                    }
                 }
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                let data = buf[..bytes_read].to_vec();
+                let hash = blake3_hash_parallel(&data);
+                let is_last = index + 1 == total;
+
+                chunks.push(FileChunk {
+                    index,
+                    hash,
+                    data,
+                    is_last,
+                });
+
+                index += 1;
             }
-
-            if bytes_read == 0 {
-                break;
-            }
-
-            let data = buf[..bytes_read].to_vec();
-            let hash = blake3_hash_parallel(&data);
-            let is_last = index + 1 == total;
-
-            chunks.push(FileChunk {
-                index,
-                hash,
-                data,
-                is_last,
-            });
-
-            index += 1;
         }
 
         Ok(chunks)

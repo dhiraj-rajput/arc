@@ -44,6 +44,8 @@ lz4_flex = "0.13.1"
 
 # === I/O ===
 bytes = "1.12.0"
+memmap2 = "0.5.12"
+rayon = "1.9.3"
 
 # === Protocol ===
 serde = { version = "1.0.228", features = ["derive"] }

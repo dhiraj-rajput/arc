@@ -300,15 +300,15 @@ pub fn prompt_file_path(
 
         // Customize labels based on action (Send vs. Receive)
         let select_current_label = if only_directories {
-            format!("📄 [Save in this directory: {}]", display_dir.display())
+            format!("[Save in this directory: {}]", display_dir.display())
         } else {
-            format!("📄 [Send this directory: {}]", display_dir.display())
+            format!("[Send this directory: {}]", display_dir.display())
         };
 
         let type_manual_label = if only_directories {
-            "✍️ [Type destination path manually]".to_string()
+            "[Type destination path manually]".to_string()
         } else {
-            "✍️ [Type path to send manually]".to_string()
+            "[Type path to send manually]".to_string()
         };
 
         let prompt_header = if only_directories {
@@ -343,27 +343,27 @@ pub fn prompt_file_path(
                 }
             }
             for drive in &alt_drives {
-                options.push(format!("💾 [Switch drive to {}]", drive));
+                options.push(format!("[Switch drive to {}]", drive));
             }
         }
 
         // Add ".." option if we have a parent
         let has_parent = display_dir.parent().is_some();
         if has_parent {
-            options.push("📁 ..".to_string());
+            options.push("..".to_string());
         }
 
         // Add subdirectories
         for dir in &subdirs {
-            options.push(format!("📁 {}/", dir));
+            options.push(format!("{}/", dir));
         }
 
         // Add files
         for file in &files {
-            options.push(format!("📄 {}", file));
+            options.push(file.clone());
         }
 
-        options.push("❌ [Cancel / Go back]".to_string());
+        options.push("[Cancel / Go back]".to_string());
 
         // Present select menu
         let selection = dialoguer::Select::with_theme(theme)
@@ -411,7 +411,7 @@ pub fn prompt_file_path(
                     }
                 } else {
                     if only_directories {
-                        println!("⚠️ Selected path is a file, but a directory is required.");
+                        println!("Selected path is a file, but a directory is required.");
                     } else {
                         return Ok(trimmed.to_string());
                     }
@@ -455,9 +455,9 @@ pub fn prompt_file_path(
                     .with_prompt(format!("Choose action for '{}'", selected_dir))
                     .default(0)
                     .items([
-                        &format!("💾 Save in '{}'", selected_dir),
-                        &format!("📁 Open folder '{}'", selected_dir),
-                        "❌ Cancel",
+                        &format!("Save in '{}'", selected_dir),
+                        &format!("Open folder '{}'", selected_dir),
+                        "Cancel",
                     ])
                     .interact()?;
                 if choice == 0 {

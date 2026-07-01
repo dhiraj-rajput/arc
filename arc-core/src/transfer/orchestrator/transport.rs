@@ -208,8 +208,9 @@ pub(crate) async fn start_local_relay()
                                                                 let entry = rooms_guard.entry(room_id.clone()).or_insert_with(|| LocalRoom { members: Vec::new() });
                                                                 if entry.members.len() >= 2 {
                                                                     println!("Relay: Room {} is full", room_id);
-                                                                    let err = serde_json::to_string(&WsRelayMessage::Error { message: "room full".to_string() }).unwrap();
-                                                                    let _ = tx.send(Message::Text(err.into()));
+                                                                    if let Ok(err) = serde_json::to_string(&WsRelayMessage::Error { message: "room full".to_string() }) {
+                                                                        let _ = tx.send(Message::Text(err.into()));
+                                                                    }
                                                                 } else {
                                                                     let member_id = rand::random::<u64>();
                                                                     entry.members.push(Member { id: member_id, tx: tx.clone() });
@@ -217,12 +218,14 @@ pub(crate) async fn start_local_relay()
                                                                     current_room = Some((room_id.clone(), member_id));
                                                                     println!("Relay: Client joined room {}, member_count: {}", room_id, member_count);
 
-                                                                    let joined = serde_json::to_string(&WsRelayMessage::Joined { room_id: room_id.clone(), member_count }).unwrap();
-                                                                    let _ = tx.send(Message::Text(joined.into()));
+                                                                    if let Ok(joined) = serde_json::to_string(&WsRelayMessage::Joined { room_id: room_id.clone(), member_count }) {
+                                                                        let _ = tx.send(Message::Text(joined.into()));
+                                                                    }
 
-                                                                    let count_msg = serde_json::to_string(&WsRelayMessage::RoomMemberCount { room_id: room_id.clone(), count: member_count }).unwrap();
-                                                                    for member in &entry.members {
-                                                                        let _ = member.tx.send(Message::Text(count_msg.clone().into()));
+                                                                    if let Ok(count_msg) = serde_json::to_string(&WsRelayMessage::RoomMemberCount { room_id: room_id.clone(), count: member_count }) {
+                                                                        for member in &entry.members {
+                                                                            let _ = member.tx.send(Message::Text(count_msg.clone().into()));
+                                                                        }
                                                                     }
                                                                 }
                                                             }

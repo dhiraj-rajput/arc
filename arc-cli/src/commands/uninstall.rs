@@ -1,5 +1,5 @@
 pub async fn exec_uninstall() -> anyhow::Result<()> {
-    println!("🌌 Uninstalling arc...");
+    println!("Uninstalling arc...");
 
     // 1. Wipe config database and keyring secrets
     let _ = arc_core::storage::wipe_config();
@@ -64,13 +64,13 @@ pub async fn exec_uninstall() -> anyhow::Result<()> {
                 ),
             ])
             .spawn()?;
-        println!("✨ arc has been uninstalled successfully!");
+        println!("arc has been uninstalled successfully!");
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         std::fs::remove_file(&current_exe)?;
-        println!("✨ arc has been uninstalled successfully!");
+        println!("arc has been uninstalled successfully!");
     }
 
     Ok(())
