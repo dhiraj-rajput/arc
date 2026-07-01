@@ -51,7 +51,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --workspace
+        run: |
+          # Run arc-core tests serially to avoid network-based integration test conflicts.
+          cargo test -p arc-core -- --test-threads=1
+          # Run the rest of the workspace tests normally.
+          cargo test --workspace --exclude arc-core
 
   security-audit:
     name: Security Audit
