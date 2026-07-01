@@ -28,7 +28,7 @@ where
         Ok::<(), anyhow::Error>(())
     };
 
-    tokio::time::timeout(Duration::from_secs(60), write_fut)
+    tokio::time::timeout(Duration::from_secs(300), write_fut)
         .await
         .map_err(|_| anyhow::anyhow!("Write timeout exceeded"))??;
     Ok(())
@@ -54,7 +54,7 @@ where
         Ok::<ArcMessage, anyhow::Error>(msg)
     };
 
-    let msg = tokio::time::timeout(Duration::from_secs(60), read_fut)
+    let msg = tokio::time::timeout(Duration::from_secs(300), read_fut)
         .await
         .map_err(|_| anyhow::anyhow!("Read timeout exceeded"))??;
     Ok(msg)

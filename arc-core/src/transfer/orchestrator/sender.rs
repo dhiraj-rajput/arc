@@ -890,11 +890,19 @@ pub async fn run_sender(
     }
 
     println!("Sender: Waiting for incoming QUIC connection over Iroh...");
-    let incoming = endpoint
-        .accept()
-        .await
-        .ok_or_else(|| anyhow::anyhow!("Iroh listener closed"))?;
-    let conn = incoming.await?;
+    let incoming = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        endpoint.accept()
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Timeout waiting for incoming connection"))?
+    .ok_or_else(|| anyhow::anyhow!("Iroh listener closed"))?;
+    let conn = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        async { incoming.await }
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Timeout establishing connection"))??;
     println!("Sender: QUIC connection established over Iroh.");
 
     // Now start the transfer session!
@@ -1235,11 +1243,19 @@ pub async fn run_stdin_sender(
     };
 
     println!("Sender: Waiting for incoming QUIC connection over Iroh...");
-    let incoming = endpoint
-        .accept()
-        .await
-        .ok_or_else(|| anyhow::anyhow!("Iroh listener closed"))?;
-    let conn = incoming.await?;
+    let incoming = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        endpoint.accept()
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Timeout waiting for incoming connection"))?
+    .ok_or_else(|| anyhow::anyhow!("Iroh listener closed"))?;
+    let conn = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        async { incoming.await }
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Timeout establishing connection"))??;
     println!("Sender: QUIC connection established over Iroh.");
 
     let session_res = run_quic_stdin_sender_session(
