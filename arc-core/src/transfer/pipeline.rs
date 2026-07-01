@@ -13,6 +13,8 @@
 use crate::compression::{CompressionAlgo, CompressionError, compress};
 use crate::crypto::cipher::{CipherError, CipherSuite, Direction, build_nonce, encrypt_chunk};
 use crate::crypto::hash::blake3_hash_parallel;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -137,12 +139,13 @@ impl TransferPipeline {
             });
         }
 
-        let comp_rx = std::sync::Arc::new(tokio::sync::Mutex::new(comp_rx));
+        let comp_rx = Arc::new(tokio::sync::Mutex::new(comp_rx));
+        let message_index = Arc::new(AtomicU32::new(0));
         for _ in 0..worker_count {
             let comp_rx = comp_rx.clone();
             let ready_tx = ready_tx.clone();
+            let message_index = message_index.clone();
             tokio::spawn(async move {
-                let mut message_index = 0u32;
                 loop {
                     let chunk = {
                         let mut rx = comp_rx.lock().await;
@@ -153,8 +156,8 @@ impl TransferPipeline {
                         None => break,
                     };
 
-                    let nonce = build_nonce(session_id, message_index, Direction::ToReceiver);
-                    message_index += 1;
+                    let idx = message_index.fetch_add(1, Ordering::Relaxed);
+                    let nonce = build_nonce(session_id, idx, Direction::ToReceiver);
 
                     let encrypted =
                         match encrypt_chunk(&session_key, &nonce, &chunk.compressed, suite) {
