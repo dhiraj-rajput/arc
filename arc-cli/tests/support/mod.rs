@@ -57,14 +57,16 @@ impl TestEnv {
         let mut cmd = AssertCommand::cargo_bin("arc").expect("arc binary");
         cmd.env(arc_core::storage::ENV_CONFIG_DIR, self.config_dir.path())
             .env("ARC_KEYRING_SUFFIX", &self.keyring_suffix)
-            .env("ARC_DISABLE_MDNS", "1");
+            .env("ARC_DISABLE_MDNS", "1")
+            .env("ARC_TEST_MODE", "1");
         cmd
     }
 
     pub fn apply_to(&self, cmd: &mut Command) {
         cmd.env(arc_core::storage::ENV_CONFIG_DIR, self.config_dir.path())
             .env("ARC_KEYRING_SUFFIX", &self.keyring_suffix)
-            .env("ARC_DISABLE_MDNS", "1");
+            .env("ARC_DISABLE_MDNS", "1")
+            .env("ARC_TEST_MODE", "1");
     }
 }
 
