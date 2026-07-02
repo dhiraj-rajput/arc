@@ -98,10 +98,11 @@ impl TransferPipeline {
         session_key: [u8; 32],
         suite: CipherSuite,
     ) -> Self {
-        let worker_count = worker_count.max(1);
-        let (raw_tx, raw_rx) = mpsc::channel::<RawChunk>(capacity);
-        let (comp_tx, comp_rx) = mpsc::channel::<CompressedChunkData>(capacity);
-        let (ready_tx, ready_rx) = mpsc::channel::<ReadyChunk>(capacity * 16);
+        let worker_count = worker_count.max(2);
+        let stage_capacity = capacity.max(8);
+        let (raw_tx, raw_rx) = mpsc::channel::<RawChunk>(stage_capacity);
+        let (comp_tx, comp_rx) = mpsc::channel::<CompressedChunkData>(stage_capacity);
+        let (ready_tx, ready_rx) = mpsc::channel::<ReadyChunk>(stage_capacity.saturating_mul(32));
 
         let raw_rx = std::sync::Arc::new(tokio::sync::Mutex::new(raw_rx));
         for _ in 0..worker_count {

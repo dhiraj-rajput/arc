@@ -128,11 +128,12 @@ impl MachineCapacity {
     /// Optimal chunk size in bytes for a file of the given size.
     ///
     /// Implements the table from §6.3 of the master plan:
-    /// < 64 KB       → whole file  
-    /// 64 KB – 1 MB  → 256 KB  
-    /// 1 MB – 100 MB → 1 MB  
-    /// 100 MB – 1 GB → 4 MB  
-    /// > 1 GB        → 8 MB
+    /// < 64 KB         → whole file
+    /// 64 KB – 1 MB    → 256 KB
+    /// 1 MB – 100 MB   → 1 MB
+    /// 100 MB – 1 GB   → 4 MB
+    /// 1 GB – 4 GB     → 32 MB
+    /// > 4 GB          → 64 MB
     pub fn optimal_chunk_size(&self, file_size: u64) -> u32 {
         const KB: u64 = 1024;
         const MB: u64 = 1024 * 1024;
@@ -142,7 +143,8 @@ impl MachineCapacity {
             65_536..=1_048_575 => (256 * KB) as u32,
             1_048_576..=104_857_599 => MB as u32,
             104_857_600..=1_073_741_823 => (4 * MB) as u32,
-            _ => (8 * MB) as u32,
+            1_073_741_824..=4_294_967_295 => (32 * MB) as u32,
+            _ => (64 * MB) as u32,
         }
     }
 
@@ -219,10 +221,10 @@ mod tests {
         // 4 MB for large files
         assert_eq!(cap.optimal_chunk_size(200 * 1024 * 1024), 4 * 1024 * 1024);
 
-        // 8 MB for very large files
+        // 32 MB for very large files to reduce per-chunk RTT overhead
         assert_eq!(
             cap.optimal_chunk_size(2 * 1024 * 1024 * 1024),
-            8 * 1024 * 1024
+            32 * 1024 * 1024
         );
     }
 

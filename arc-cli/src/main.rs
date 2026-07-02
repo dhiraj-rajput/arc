@@ -429,14 +429,20 @@ async fn run_interactive_menu() -> anyhow::Result<()> {
                     None => {
                         let p: String = Input::with_theme(&theme)
                             .with_prompt(
-                                "Enter the 6-word phrase/code to sync over (type 'back' to cancel)",
+                                "Enter the 6-word phrase/code to sync over (leave blank to auto-generate)",
                             )
                             .interact_text()?;
-                        if p.trim() == "back" || p.trim() == "exit" || p.trim().is_empty() {
+                        if p.trim() == "back" || p.trim() == "exit" {
                             println!("Operation cancelled.");
                             continue;
                         }
-                        p
+                        if p.trim().is_empty() {
+                            let generated = generate_phrase();
+                            println!("Generated one-time clipboard code: {}", generated);
+                            generated
+                        } else {
+                            p
+                        }
                     }
                 };
 

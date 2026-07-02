@@ -1,5 +1,6 @@
 use futures_util::{SinkExt, StreamExt};
 use serde_json;
+use std::collections::VecDeque;
 use std::path::Path;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
@@ -20,6 +21,10 @@ use super::transport::{
     HandshakePayload, RateLimiter, WsJoin, WsRelayMessage, WsSignal, decrypt_signal,
     encrypt_signal, recv_msg_stream, send_msg_stream,
 };
+
+fn recommended_inflight_chunks(parallel_streams: usize) -> usize {
+    parallel_streams.clamp(4, 16)
+}
 
 #[allow(clippy::too_many_arguments)]
 async fn run_quic_sender_session(
@@ -193,6 +198,7 @@ async fn run_quic_sender_session(
     let chunk_size = chunker.config.chunk_size as usize;
     let chunk_count = chunker.chunk_count;
     let pipeline_tx = pipeline.clone_tx().expect("pipeline should be open");
+    let chunk_push_interval = std::cmp::max(1, chunker.config.parallel_streams / 2);
     let accepted_bitmap_reader = resume_bitmap.clone().or(accepted_bitmap.clone());
     tokio::spawn(async move {
         let mut file = match tokio::fs::File::open(&path_clone).await {
@@ -262,6 +268,10 @@ async fn run_quic_sender_session(
                 break;
             }
             index += 1;
+
+            if index as usize % chunk_push_interval == 0 {
+                tokio::task::yield_now().await;
+            }
         }
     });
     pipeline.close();
@@ -300,8 +310,72 @@ async fn run_quic_sender_session(
         }
     }
 
+    let max_in_flight = recommended_inflight_chunks(chunker.config.parallel_streams);
+    let (ack_tx, mut ack_rx) =
+        mpsc::channel::<Result<ArcMessage, anyhow::Error>>(max_in_flight * 2);
+    let mut recv_stream_for_acks = recv_stream;
+    tokio::spawn(async move {
+        loop {
+            match recv_msg_stream(&mut recv_stream_for_acks).await {
+                Ok(msg) => {
+                    if ack_tx.send(Ok(msg)).await.is_err() {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    let _ = ack_tx.send(Err(err)).await;
+                    break;
+                }
+            }
+        }
+    });
+
+    let mut pending_indexes = VecDeque::new();
     while let Some(ready) = pipeline_rx.recv().await {
         rate_limiter.throttle(ready.encrypted.len()).await;
+
+        while pending_indexes.len() >= max_in_flight {
+            let ack_msg = ack_rx
+                .recv()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("receiver stream closed"))??;
+            validate_message_for_state(&ack_msg, &current_state)?;
+            if let Some(next) = next_state(&current_state, &ack_msg) {
+                current_state = next;
+            }
+
+            match ack_msg {
+                ArcMessage::ChunkAck { index, .. } => {
+                    if pending_indexes.front().copied() != Some(index) {
+                        return Err(anyhow::anyhow!(
+                            "received unexpected chunk ack index {}",
+                            index
+                        ));
+                    }
+                    pending_indexes.pop_front();
+                    sent_chunks += 1;
+                    if let Some(ref tx) = progress_tx {
+                        let _ = tx.send((sent_chunks, chunk_count)).await;
+                    }
+                }
+                ArcMessage::ChunkNak { retry_count, .. } => {
+                    return Err(anyhow::anyhow!(
+                        "Chunk retransmission requested during pipelined send (retry_count: {})",
+                        retry_count
+                    ));
+                }
+                ArcMessage::TransferAbort { reason, .. } => {
+                    return Err(anyhow::anyhow!(
+                        "Transfer aborted by receiver: {:?}",
+                        reason
+                    ));
+                }
+                ArcMessage::Goodbye { .. } => {
+                    return Err(anyhow::anyhow!("receiver closed early"));
+                }
+                _ => return Err(anyhow::anyhow!("Expected ChunkAck or ChunkNak")),
+            }
+        }
 
         let chunk_msg = ArcMessage::Chunk {
             transfer_id: match &offer {
@@ -313,49 +387,50 @@ async fn run_quic_sender_session(
             data: ready.encrypted,
             is_last: ready.is_last,
         };
+        send_msg_stream(&mut send_stream, &chunk_msg).await?;
+        pending_indexes.push_back(ready.index);
+    }
 
-        let mut retries = 0;
-        loop {
-            send_msg_stream(&mut send_stream, &chunk_msg).await?;
-
-            // Wait for ChunkAck or ChunkNak
-            let ack_msg = recv_msg_stream(&mut recv_stream).await?;
-            validate_message_for_state(&ack_msg, &current_state)?;
-            if let Some(next) = next_state(&current_state, &ack_msg) {
-                current_state = next;
-            }
-
-            match ack_msg {
-                ArcMessage::ChunkAck { .. } => {
-                    break;
-                }
-                ArcMessage::ChunkNak { retry_count, .. } => {
-                    retries += 1;
-                    if retries > 5 {
-                        return Err(anyhow::anyhow!(
-                            "Chunk retransmission limit exceeded (index: {})",
-                            ready.index
-                        ));
-                    }
-                    tracing::warn!(
-                        index = ready.index,
-                        retry_count,
-                        "Received ChunkNak, retransmitting chunk"
-                    );
-                }
-                ArcMessage::TransferAbort { reason, .. } => {
-                    return Err(anyhow::anyhow!(
-                        "Transfer aborted by receiver: {:?}",
-                        reason
-                    ));
-                }
-                _ => return Err(anyhow::anyhow!("Expected ChunkAck or ChunkNak")),
-            }
+    while !pending_indexes.is_empty() {
+        let ack_msg = ack_rx
+            .recv()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("receiver stream closed"))??;
+        validate_message_for_state(&ack_msg, &current_state)?;
+        if let Some(next) = next_state(&current_state, &ack_msg) {
+            current_state = next;
         }
 
-        sent_chunks += 1;
-        if let Some(ref tx) = progress_tx {
-            let _ = tx.send((sent_chunks, chunk_count)).await;
+        match ack_msg {
+            ArcMessage::ChunkAck { index, .. } => {
+                if pending_indexes.front().copied() != Some(index) {
+                    return Err(anyhow::anyhow!(
+                        "received unexpected chunk ack index {}",
+                        index
+                    ));
+                }
+                pending_indexes.pop_front();
+                sent_chunks += 1;
+                if let Some(ref tx) = progress_tx {
+                    let _ = tx.send((sent_chunks, chunk_count)).await;
+                }
+            }
+            ArcMessage::ChunkNak { retry_count, .. } => {
+                return Err(anyhow::anyhow!(
+                    "Chunk retransmission requested during pipelined send (retry_count: {})",
+                    retry_count
+                ));
+            }
+            ArcMessage::TransferAbort { reason, .. } => {
+                return Err(anyhow::anyhow!(
+                    "Transfer aborted by receiver: {:?}",
+                    reason
+                ));
+            }
+            ArcMessage::Goodbye { .. } => {
+                return Err(anyhow::anyhow!("receiver closed early"));
+            }
+            _ => return Err(anyhow::anyhow!("Expected ChunkAck or ChunkNak")),
         }
     }
 
@@ -376,7 +451,10 @@ async fn run_quic_sender_session(
 
     // Wait for Goodbye
     current_state = SessionState::IdleReady;
-    let goodbye_msg = recv_msg_stream(&mut recv_stream).await?;
+    let goodbye_msg = ack_rx
+        .recv()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("receiver stream closed"))??;
     validate_message_for_state(&goodbye_msg, &current_state)?;
     match goodbye_msg {
         ArcMessage::Goodbye { .. } => {}

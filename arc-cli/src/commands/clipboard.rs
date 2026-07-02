@@ -16,6 +16,35 @@ struct ClipboardPayload {
     text: String,
 }
 
+fn resolve_sync_phrase(input: Option<String>) -> String {
+    input
+        .filter(|phrase| !phrase.trim().is_empty())
+        .unwrap_or_else(crate::ui::generate_phrase)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_sync_phrase;
+
+    #[test]
+    fn uses_explicit_phrase_when_present() {
+        let phrase = resolve_sync_phrase(Some("alpha-beta-gamma-delta-epsilon-zeta".to_string()));
+        assert_eq!(phrase, "alpha-beta-gamma-delta-epsilon-zeta");
+    }
+
+    #[test]
+    fn generates_phrase_when_input_is_empty() {
+        let phrase = resolve_sync_phrase(Some(String::new()));
+        assert!(crate::ui::validate_passphrase(&phrase));
+    }
+
+    #[test]
+    fn generates_phrase_when_input_is_missing() {
+        let phrase = resolve_sync_phrase(None);
+        assert!(crate::ui::validate_passphrase(&phrase));
+    }
+}
+
 pub async fn exec_clipboard_sync(
     phrase: String,
     relay_override: Option<String>,
@@ -46,6 +75,7 @@ pub async fn exec_clipboard_sync(
     ws_write.send(Message::Text(join_json.into())).await?;
 
     println!("Joined room. Starting clipboard sync daemon...");
+    println!("Clipboard sync is bidirectional. Any clipboard change on either device will be mirrored.");
     println!("Monitoring clipboard... Press Ctrl+C to stop.");
 
     let device_id = identity.device_id();
